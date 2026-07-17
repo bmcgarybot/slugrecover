@@ -640,6 +640,62 @@ input::placeholder { color: var(--text-faint); }
     .results-bar { flex-direction: column; align-items: stretch; }
 }
 
+/* ─── File Browser ────────────────────────── */
+
+.browser-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.browser-path-input {
+    flex: 1;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 12px !important;
+}
+
+.browser-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-input);
+}
+
+.browser-list:empty::after {
+    content: 'Empty folder';
+    display: block;
+    text-align: center;
+    padding: 20px;
+    color: var(--text-faint);
+    font-size: 12px;
+}
+
+.browser-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+}
+
+.browser-item:last-child { border-bottom: none; }
+.browser-item:hover { background: var(--bg-hover); }
+.browser-item.selected { background: var(--accent-soft); }
+.browser-item .bi-icon { font-size: 14px; flex-shrink: 0; }
+.browser-item .bi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-item .bi-size { color: var(--text-faint); font-size: 11px; font-family: monospace; }
+
+.browser-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
 /* ─── Utilities ──────────────────────────── */
 
 .hidden { display: none !important; }

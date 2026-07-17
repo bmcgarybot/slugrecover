@@ -252,6 +252,56 @@ def api_drives():
         return jsonify({'error': str(e), 'drives': []}), 500
 
 
+@app.route('/api/browse')
+def api_browse():
+    """Browse filesystem directories."""
+    path = request.args.get('path', '')
+
+    if not path:
+        if platform.system() == 'Darwin':
+            path = '/Volumes'
+        elif platform.system() == 'Windows':
+            path = 'C:\\'
+        else:
+            path = '/'
+
+    path = os.path.expanduser(path)
+
+    if not os.path.exists(path):
+        return jsonify({'error': f'Not found: {path}', 'items': [], 'current': path})
+
+    if os.path.isfile(path):
+        return jsonify({'current': path, 'is_file': True, 'items': []})
+
+    items = []
+    try:
+        entries = sorted(os.listdir(path))
+    except PermissionError:
+        return jsonify({'error': 'Permission denied', 'items': [], 'current': path})
+
+    parent = os.path.dirname(path.rstrip('/'))
+    if parent and parent != path:
+        items.append({'name': '..', 'path': parent, 'is_dir': True, 'size_human': ''})
+
+    for entry in entries:
+        if entry.startswith('.'):
+            continue
+        full = os.path.join(path, entry)
+        try:
+            is_dir = os.path.isdir(full)
+            size = 0 if is_dir else os.path.getsize(full)
+            items.append({
+                'name': entry,
+                'path': full,
+                'is_dir': is_dir,
+                'size_human': FileCarver._human_size(size) if not is_dir else '',
+            })
+        except (PermissionError, OSError):
+            continue
+
+    return jsonify({'current': path, 'is_file': False, 'items': items})
+
+
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():

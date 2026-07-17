@@ -21,7 +21,10 @@
     <div class="card-row">
         <div class="card compact">
             <div class="card-label">💾 Scan Source</div>
-            <input type="text" id="source-path" placeholder="/dev/disk2 · E:\ · /path/to/image.img">
+            <div style="display:flex;gap:6px;">
+                <input type="text" id="source-path" placeholder="/dev/disk2 · E:\ · /path/to/image.img" style="flex:1;">
+                <button class="btn btn-xs" onclick="openBrowser('source')">📂</button>
+            </div>
             {% if drives %}
             <div class="drive-chips">
                 {% for drive in drives %}
@@ -34,8 +37,27 @@
         </div>
         <div class="card compact">
             <div class="card-label">📂 Save To</div>
-            <input type="text" id="output-dir" value="{{ settings.output_dir }}">
+            <div style="display:flex;gap:6px;">
+                <input type="text" id="output-dir" value="{{ settings.output_dir }}" style="flex:1;">
+                <button class="btn btn-xs" onclick="openBrowser('output')">📂</button>
+            </div>
             <div class="card-hint">Use a different drive than the source</div>
+        </div>
+    </div>
+
+    <!-- Inline File Browser -->
+    <div id="browser-panel" class="card compact" style="display:none;">
+        <div class="browser-header">
+            <div style="display:flex;align-items:center;gap:6px;flex:1;">
+                <span class="card-label" style="margin:0;">📂</span>
+                <input type="text" id="browser-path" class="browser-path-input" onkeydown="if(event.key==='Enter')browseTo(this.value)">
+                <button class="btn btn-xs" onclick="browseTo(document.getElementById('browser-path').value)">Go</button>
+            </div>
+            <button class="btn btn-xs" onclick="closeBrowser()">✕</button>
+        </div>
+        <div class="browser-list" id="browser-list"></div>
+        <div class="browser-footer">
+            <button class="btn btn-xs btn-primary" id="browser-use-btn" onclick="useBrowserPath()">Use This Path</button>
         </div>
     </div>
 

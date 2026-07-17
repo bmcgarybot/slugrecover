@@ -214,6 +214,56 @@ function updTypeSummary() {
     if (el) el.textContent = checked === total ? `All ${total} types` : `${checked} of ${total} selected`;
 }
 
+// ─── File Browser ───────────────────────────────────────
+
+let browserTarget = null; // 'source' or 'output'
+let browserSelected = '';
+
+function openBrowser(target) {
+    browserTarget = target;
+    document.getElementById('browser-panel').style.display = 'block';
+    // Start at current value or default
+    const current = val(target === 'output' ? 'output-dir' : 'source-path');
+    browseTo(current || '');
+}
+
+function closeBrowser() {
+    document.getElementById('browser-panel').style.display = 'none';
+}
+
+function browseTo(path) {
+    fetch('/api/browse?path=' + encodeURIComponent(path))
+        .then(r => r.json())
+        .then(d => {
+            if (d.is_file) { browserSelected = d.current; useBrowserPath(); return; }
+            browserSelected = d.current;
+            document.getElementById('browser-path').value = d.current;
+            const list = document.getElementById('browser-list');
+            list.innerHTML = '';
+            d.items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'browser-item';
+                el.innerHTML = `<span class="bi-icon">${item.is_dir ? '📁' : '📄'}</span><span class="bi-name">${item.name}</span><span class="bi-size">${item.size_human}</span>`;
+                el.addEventListener('click', () => {
+                    list.querySelectorAll('.browser-item').forEach(i => i.classList.remove('selected'));
+                    el.classList.add('selected');
+                    browserSelected = item.path;
+                });
+                el.addEventListener('dblclick', () => {
+                    if (item.is_dir) browseTo(item.path);
+                    else { browserSelected = item.path; useBrowserPath(); }
+                });
+                list.appendChild(el);
+            });
+        });
+}
+
+function useBrowserPath() {
+    const id = browserTarget === 'output' ? 'output-dir' : 'source-path';
+    document.getElementById(id).value = browserSelected;
+    closeBrowser();
+}
+
 // ─── Settings ───────────────────────────────────────────
 
 function saveSettings() {
