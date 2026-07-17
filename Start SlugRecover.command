@@ -4,6 +4,7 @@
 #  Just double-click this file. It sets everything up for you.
 # ─────────────────────────────────────────────────────────────
 cd "$(dirname "$0")"
+APP_DIR="$(pwd)"
 
 echo ""
 echo "  🐌 Starting SlugRecover..."
@@ -33,9 +34,6 @@ if [ -z "$PYTHON" ]; then
     xcode-select --install 2>/dev/null
 
     echo "  ⏳ Waiting for the install to finish..."
-    echo "     (You can leave this window sitting here. It will"
-    echo "      continue on its own once the tools are ready.)"
-    echo ""
     for i in $(seq 1 240); do
         PYTHON="$(find_python)"
         if [ -n "$PYTHON" ]; then
@@ -76,23 +74,33 @@ fi
 
 # ── 4. Launch with admin access automatically ────────────────
 #    Uses the standard macOS password dialog (like installing an app).
-#    No terminal sudo, no scary prompts.
-
-LAUNCH_CMD="cd \"$(pwd)\" && ./.venv/bin/python app.py"
 
 if [ "$EUID" -ne 0 ]; then
     echo ""
-    echo "  🔑 macOS may ask for your password — this lets"
-    echo "     SlugRecover access drives and memory cards."
+    echo "  🔑 Your Mac will ask for your password so SlugRecover"
+    echo "     can access drives and memory cards."
     echo ""
-    echo "  ✅ Your browser will open automatically."
-    echo "     Keep this window open while you use it."
-    echo ""
+
+    # Write a temp launch script to avoid quoting hell with osascript
+    LAUNCH_SCRIPT="$APP_DIR/.slugrecover_launch.sh"
+    cat > "$LAUNCH_SCRIPT" << INNERSCRIPT
+#!/bin/bash
+cd '$APP_DIR'
+exec '$APP_DIR/.venv/bin/python' '$APP_DIR/app.py'
+INNERSCRIPT
+    chmod +x "$LAUNCH_SCRIPT"
+
     ( sleep 3 && open "http://localhost:5678" ) &
-    # Use osascript for the native macOS password dialog
-    osascript -e "do shell script \"$LAUNCH_CMD\" with administrator privileges" 2>/dev/null
-    # If user cancelled the password dialog, run without admin
-    if [ $? -ne 0 ]; then
+
+    # Native macOS password popup
+    osascript -e "do shell script quoted form of \"$LAUNCH_SCRIPT\" with administrator privileges"
+    EXIT_CODE=$?
+
+    # Clean up temp script
+    rm -f "$LAUNCH_SCRIPT" 2>/dev/null
+
+    if [ $EXIT_CODE -ne 0 ]; then
+        echo ""
         echo "  ℹ️  Running without admin access."
         echo "     You can scan disk image files, but not drives directly."
         echo ""
