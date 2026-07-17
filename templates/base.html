@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}SlugRecover{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
 </head>
@@ -12,20 +14,21 @@
         <div class="nav-brand">
             <span class="nav-icon">🐌</span>
             <span class="nav-title">SlugRecover</span>
+            <span class="nav-version">v1.0</span>
         </div>
         <div class="nav-links">
             <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
-                <span class="link-icon">🏠</span> Dashboard
+                🏠 Dashboard
             </a>
             <a href="/results" class="nav-link {% if request.path == '/results' %}active{% endif %}">
-                <span class="link-icon">📁</span> Results
+                📁 Results
             </a>
             <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">
-                <span class="link-icon">⚙️</span> Settings
+                ⚙️ Settings
             </a>
         </div>
-        <div class="nav-status" id="nav-status">
-            <span class="status-badge idle" id="global-status">Idle</span>
+        <div class="nav-status">
+            <span class="status-badge idle" id="global-status">Ready</span>
         </div>
     </nav>
 
@@ -34,7 +37,7 @@
     </main>
 
     <footer class="footer">
-        <span>🐌 SlugRecover v1.0 — File Recovery & Carving Tool</span>
+        🐌 SlugRecover v1.0 — File Recovery & Carving Tool
     </footer>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>

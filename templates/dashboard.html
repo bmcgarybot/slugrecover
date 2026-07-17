@@ -1,100 +1,182 @@
 {% extends "base.html" %}
-{% block title %}SlugRecover — Dashboard{% endblock %}
+{% block title %}SlugRecover — Recover Your Files{% endblock %}
 
 {% block content %}
+
+<!-- Page Header -->
+<div class="page-header">
+    <h1>🔍 Recover Your Files</h1>
+    <p>Find and recover deleted photos, videos, and documents from any drive or memory card.</p>
+</div>
+
 <!-- Admin Notice -->
 {% if not is_admin %}
-<div class="admin-notice">
-    <span>⚠️</span>
-    <span>
-        <strong>Not running as admin/root.</strong>
-        Raw disk scanning requires elevated privileges.
+<div class="banner warning">
+    <span class="banner-icon">⚠️</span>
+    <div>
+        <strong>Running without admin privileges.</strong><br>
+        To scan drives directly, restart with
         {% if platform == 'Windows' %}
-            Run as Administrator.
-        {% elif platform == 'Darwin' %}
-            Run with <code>sudo python app.py</code>
+            <strong>Run as Administrator</strong>.
         {% else %}
-            Run with <code>sudo python3 app.py</code>
+            <code>sudo python3 app.py</code>.
         {% endif %}
-        <br>You can still scan disk image files (.img, .dd, .raw) without admin.
-    </span>
+        <br>You can still scan <strong>disk image files</strong> (.img, .dd, .raw) without admin.
+    </div>
 </div>
 {% else %}
-<div class="admin-notice ok">
-    <span>✅</span>
-    <span><strong>Running with elevated privileges.</strong> Raw disk access available.</span>
+<div class="banner success">
+    <span class="banner-icon">✅</span>
+    <div><strong>Admin access enabled.</strong> You can scan drives, partitions, and image files.</div>
 </div>
 {% endif %}
 
-<!-- Scan Setup -->
+<!-- ═══ SCAN SETUP ═══ -->
 <div id="scan-setup">
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">💾</span>
-            <h2>Source</h2>
+
+    <!-- Step 1: Choose Source -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">1</div>
+            <div>
+                <div class="step-title">Choose What to Scan</div>
+                <div class="step-subtitle">Pick a drive, memory card, or disk image file</div>
+            </div>
         </div>
 
-        <!-- Drives -->
         {% if drives %}
         <div class="form-group">
-            <label>Available Drives</label>
+            <label class="form-label">Available Drives</label>
             <div class="drive-list">
                 {% for drive in drives %}
                 <div class="drive-item" data-path="{{ drive.path }}" onclick="selectDrive('{{ drive.path }}')">
-                    <span class="drive-name">{{ drive.path }}</span>
+                    <div style="display:flex;align-items:center;">
+                        <span class="drive-icon">💾</span>
+                        <span class="drive-name">{{ drive.path }}</span>
+                    </div>
                     <span class="drive-size">{{ drive.size_human }}</span>
                 </div>
                 {% endfor %}
             </div>
         </div>
+        <div class="or-divider">or type a path</div>
         {% endif %}
 
         <div class="form-group">
-            <label>Source Path (drive, partition, or disk image file)</label>
-            <input type="text" id="source-path" placeholder="/dev/sdb1 or C:\path\to\image.dd or /path/to/card.img">
-        </div>
-
-        <div class="form-group">
-            <label>Output Directory</label>
-            <input type="text" id="output-dir" value="{{ settings.output_dir }}">
+            <label class="form-label">Path to Drive or Image File</label>
+            <input type="text" id="source-path"
+                   placeholder="Examples: /dev/sdb1 &nbsp;·&nbsp; E:\ &nbsp;·&nbsp; /path/to/sdcard.img">
+            <div class="form-hint">
+                💡 Tip: You can scan a whole drive, a single partition, or a disk image file (.img, .dd, .raw)
+            </div>
         </div>
     </div>
 
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">📋</span>
-            <h2>File Types to Recover</h2>
+    <!-- Step 2: File Types -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">2</div>
+            <div>
+                <div class="step-title">What Are You Looking For?</div>
+                <div class="step-subtitle">Select the types of files you want to recover</div>
+            </div>
         </div>
 
-        <div class="btn-group mb-8">
-            <button class="btn btn-sm btn-secondary" onclick="selectAllTypes()">Select All</button>
-            <button class="btn btn-sm btn-secondary" onclick="selectNoTypes()">Select None</button>
+        <div class="type-toolbar">
+            <button class="btn btn-sm btn-secondary" onclick="selectAllTypes()">✅ All</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectNoTypes()">❌ None</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectCategory('image')">📷 Photos Only</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectCategory('video')">🎬 Videos Only</button>
         </div>
 
-        <div class="type-grid">
+        <div class="type-category-label">📷 Photos & Images</div>
+        <div class="type-grid" id="type-grid-images">
             {% for sig in signatures %}
-            <label class="type-checkbox checked" onclick="toggleTypeCheckbox(this)">
+            {% if sig.category == 'image' %}
+            <div class="type-card checked" onclick="toggleType(this)" data-ext="{{ sig.extension }}" data-category="{{ sig.category }}">
                 <input type="checkbox" value="{{ sig.extension }}" checked>
-                <span>{{ sig.icon }}</span>
-                <span>{{ sig.name }}</span>
-            </label>
+                <div class="type-check"></div>
+                <span class="type-icon">{{ sig.icon }}</span>
+                <div class="type-info">
+                    <div class="type-name">{{ sig.name }}</div>
+                    <div class="type-ext">.{{ sig.extension }}</div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <div class="type-category-label">🎬 Videos</div>
+        <div class="type-grid" id="type-grid-videos">
+            {% for sig in signatures %}
+            {% if sig.category == 'video' %}
+            <div class="type-card checked" onclick="toggleType(this)" data-ext="{{ sig.extension }}" data-category="{{ sig.category }}">
+                <input type="checkbox" value="{{ sig.extension }}" checked>
+                <div class="type-check"></div>
+                <span class="type-icon">{{ sig.icon }}</span>
+                <div class="type-info">
+                    <div class="type-name">{{ sig.name }}</div>
+                    <div class="type-ext">.{{ sig.extension }}</div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <div class="type-category-label">📄 Documents</div>
+        <div class="type-grid" id="type-grid-docs">
+            {% for sig in signatures %}
+            {% if sig.category == 'document' %}
+            <div class="type-card checked" onclick="toggleType(this)" data-ext="{{ sig.extension }}" data-category="{{ sig.category }}">
+                <input type="checkbox" value="{{ sig.extension }}" checked>
+                <div class="type-check"></div>
+                <span class="type-icon">{{ sig.icon }}</span>
+                <div class="type-info">
+                    <div class="type-name">{{ sig.name }}</div>
+                    <div class="type-ext">.{{ sig.extension }}</div>
+                </div>
+            </div>
+            {% endif %}
             {% endfor %}
         </div>
     </div>
 
-    <div class="text-center">
-        <button class="btn btn-primary" onclick="startScan()" id="btn-start">
-            🔍 Start Scan
+    <!-- Step 3: Where to Save -->
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number">3</div>
+            <div>
+                <div class="step-title">Where to Save Recovered Files</div>
+                <div class="step-subtitle">Choose a folder on a different drive than the one you're scanning</div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Output Folder</label>
+            <input type="text" id="output-dir" value="{{ settings.output_dir }}">
+            <div class="form-hint">
+                ⚠️ Important: Save to a <strong>different drive</strong> than the one you're recovering from!
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Button -->
+    <div class="btn-center">
+        <button class="btn btn-primary btn-lg" onclick="startScan()" id="btn-start">
+            🔍 Start Recovery Scan
         </button>
     </div>
 </div>
 
-<!-- Scan Progress -->
+<!-- ═══ SCAN PROGRESS ═══ -->
 <div id="scan-progress" class="progress-section">
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">🔍</span>
-            <h2>Scanning...</h2>
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number" style="background:linear-gradient(135deg, var(--accent), var(--accent-hover));animation:pulse 1.5s infinite;">⟳</div>
+            <div>
+                <div class="step-title" id="progress-title">Scanning for files...</div>
+                <div class="step-subtitle" id="progress-subtitle">This can take a while for large drives. You can pause anytime.</div>
+            </div>
         </div>
 
         <div class="progress-bar-wrap">
@@ -102,32 +184,32 @@
             <span class="progress-text" id="progress-text">0%</span>
         </div>
 
-        <div class="progress-stats">
-            <div class="stat-box">
+        <div class="stats-grid">
+            <div class="stat-card">
                 <div class="stat-value" id="stat-files">0</div>
                 <div class="stat-label">Files Found</div>
             </div>
-            <div class="stat-box">
+            <div class="stat-card">
                 <div class="stat-value" id="stat-speed">—</div>
                 <div class="stat-label">Speed</div>
             </div>
-            <div class="stat-box">
+            <div class="stat-card">
                 <div class="stat-value" id="stat-elapsed">0s</div>
                 <div class="stat-label">Elapsed</div>
             </div>
-            <div class="stat-box">
+            <div class="stat-card">
                 <div class="stat-value" id="stat-eta">—</div>
-                <div class="stat-label">ETA</div>
+                <div class="stat-label">Time Left</div>
             </div>
         </div>
 
-        <div class="text-center mt-16" id="stat-scanned" style="font-size:12px;color:var(--text-muted)"></div>
+        <div class="scan-detail" id="stat-scanned"></div>
 
         <div id="found-grid" class="found-grid"></div>
 
-        <div id="scan-error" style="display:none;color:var(--error);margin-top:12px;padding:12px;background:rgba(231,76,60,0.1);border-radius:6px;"></div>
+        <div class="scan-error" id="scan-error"></div>
 
-        <div class="btn-group mt-16" style="justify-content:center;">
+        <div class="btn-group mt-24" style="justify-content:center;">
             <button class="btn btn-secondary" id="btn-pause" onclick="pauseScan()">⏸ Pause</button>
             <button class="btn btn-primary" id="btn-resume" onclick="resumeScan()" style="display:none">▶ Resume</button>
             <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()">✕ Cancel</button>
@@ -135,25 +217,35 @@
     </div>
 </div>
 
-<!-- Results Section -->
+<!-- ═══ RESULTS ═══ -->
 <div id="results-section" style="display:none">
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">📁</span>
-            <h2>Recovered Files</h2>
+    <div class="step-card">
+        <div class="step-header">
+            <div class="step-number" style="background:linear-gradient(135deg, var(--green), #27ae60);">✓</div>
+            <div>
+                <div class="step-title">Scan Complete!</div>
+                <div class="step-subtitle" id="results-subtitle">Select the files you want to recover, or grab them all.</div>
+            </div>
         </div>
 
-        <div class="results-header">
-            <span id="results-count">0 files found</span>
+        <div class="results-toolbar">
+            <div class="results-count">
+                <span id="results-count">0</span> files found
+            </div>
             <div class="btn-group">
                 <button class="btn btn-sm btn-secondary" onclick="selectAll()">Select All</button>
                 <button class="btn btn-sm btn-secondary" onclick="selectNone()">Select None</button>
-                <button class="btn btn-sm btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>Recover Selected (0)</button>
-                <button class="btn btn-sm btn-success" onclick="recoverAll()">Recover All</button>
+                <button class="btn btn-sm btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>
+                    💾 Recover Selected (0)
+                </button>
+                <button class="btn btn-sm btn-success" onclick="recoverAll()">
+                    ✅ Recover All
+                </button>
             </div>
         </div>
 
         <div class="results-grid" id="results-grid"></div>
     </div>
 </div>
+
 {% endblock %}

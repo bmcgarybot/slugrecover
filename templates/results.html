@@ -2,41 +2,50 @@
 {% block title %}SlugRecover — Results{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header">
-        <span class="icon">📁</span>
-        <h2>Recovery Results</h2>
-    </div>
+<div class="page-header">
+    <h1>📁 Recovery Results</h1>
+    <p>Browse and recover files found during your last scan.</p>
+</div>
 
-    <div class="results-header">
-        <span id="results-count">Loading...</span>
+<div class="step-card">
+    <div class="results-toolbar">
+        <div class="results-count">
+            <span id="results-count">0</span> files found
+        </div>
         <div class="btn-group">
             <button class="btn btn-sm btn-secondary" onclick="selectAll()">Select All</button>
             <button class="btn btn-sm btn-secondary" onclick="selectNone()">Select None</button>
-            <button class="btn btn-sm btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>Recover Selected (0)</button>
-            <button class="btn btn-sm btn-success" onclick="recoverAll()">Recover All</button>
+            <button class="btn btn-sm btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>
+                💾 Recover Selected (0)
+            </button>
+            <button class="btn btn-sm btn-success" onclick="recoverAll()">
+                ✅ Recover All
+            </button>
         </div>
     </div>
 
     <div class="form-group">
-        <label>Output Directory</label>
+        <label class="form-label">Save To</label>
         <input type="text" id="output-dir" value="{{ settings.output_dir }}">
     </div>
 
     <div class="results-grid" id="results-grid">
-        <p class="text-center" style="color:var(--text-muted);grid-column:1/-1;">
-            No scan results yet. Run a scan from the Dashboard first.
-        </p>
+        <div class="empty-state" style="grid-column:1/-1;">
+            <div class="icon">🔍</div>
+            <p>No scan results yet.<br>Run a scan from the Dashboard first.</p>
+        </div>
     </div>
 </div>
 
-<!-- Stats card -->
-<div class="card" id="stats-card" style="display:none;">
-    <div class="card-header">
-        <span class="icon">📊</span>
-        <h2>Recovery Statistics</h2>
+<!-- Recovery Stats -->
+<div class="step-card" id="stats-card" style="display:none;">
+    <div class="step-header">
+        <div class="step-number" style="background:linear-gradient(135deg, var(--green), #27ae60);">📊</div>
+        <div>
+            <div class="step-title">Recovery Statistics</div>
+        </div>
     </div>
-    <div class="progress-stats" id="recovery-stats"></div>
+    <div class="stats-grid" id="recovery-stats"></div>
 </div>
 
 {% endblock %}
@@ -46,7 +55,6 @@
 document.addEventListener('DOMContentLoaded', function() {
     loadResults();
 
-    // Load recovery stats
     fetch('/api/stats')
         .then(r => r.json())
         .then(data => {
@@ -56,18 +64,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (statsCard) statsCard.style.display = 'block';
                 if (statsGrid) {
                     statsGrid.innerHTML = `
-                        <div class="stat-box">
+                        <div class="stat-card">
                             <div class="stat-value">${data.total_files}</div>
                             <div class="stat-label">Files Recovered</div>
                         </div>
-                        <div class="stat-box">
+                        <div class="stat-card">
                             <div class="stat-value">${formatBytes(data.total_size)}</div>
                             <div class="stat-label">Total Size</div>
                         </div>
                     `;
                     for (const [type, info] of Object.entries(data.by_type)) {
                         statsGrid.innerHTML += `
-                            <div class="stat-box">
+                            <div class="stat-card">
                                 <div class="stat-value">${info.count}</div>
                                 <div class="stat-label">${type}</div>
                             </div>
