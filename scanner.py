@@ -131,6 +131,97 @@ class FileCarver:
         self._source_path: Optional[str] = None
         self._signatures: List[FileSignature] = []
 
+    # ─── Device Size Detection ───────────────────────────────────────
+
+    @staticmethod
+    def _get_device_size(path: str) -> Optional[int]:
+        """
+        Get the size of a block device, handling platform quirks.
+        macOS seek(0,2) returns 0 on raw devices — needs diskutil/ioctl.
+        """
+        system = platform.system()
+
+        # Try seek first (works on Linux, Windows, and disk images)
+        try:
+            with open(path, 'rb') as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size > 0:
+                    return size
+        except Exception:
+            pass
+
+        if system == 'Darwin':
+            size = FileCarver._get_macos_device_size(path)
+            if size and size > 0:
+                return size
+
+        if system == 'Linux':
+            size = FileCarver._get_linux_device_size(path)
+            if size and size > 0:
+                return size
+
+        return None
+
+    @staticmethod
+    def _get_macos_device_size(path: str) -> Optional[int]:
+        """Get device size on macOS using diskutil or ioctl."""
+        import re
+
+        dev_name = os.path.basename(path)
+        if dev_name.startswith('r'):
+            dev_name = dev_name[1:]
+
+        # Try diskutil info
+        try:
+            result = subprocess.run(
+                ['diskutil', 'info', dev_name],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if any(k in line for k in ('Disk Size:', 'Total Size:', 'Partition Size:')):
+                        match = re.search(r'\((\d+)\s*[Bb]ytes?\)', line)
+                        if match:
+                            return int(match.group(1))
+        except Exception:
+            pass
+
+        # Try ioctl
+        try:
+            import fcntl
+            DKIOCGETBLOCKSIZE = 0x40046418
+            DKIOCGETBLOCKCOUNT = 0x40086419
+            with open(path, 'rb') as f:
+                fd = f.fileno()
+                buf = bytearray(4)
+                fcntl.ioctl(fd, DKIOCGETBLOCKSIZE, buf)
+                block_size = struct.unpack('I', buf)[0]
+                buf = bytearray(8)
+                fcntl.ioctl(fd, DKIOCGETBLOCKCOUNT, buf)
+                block_count = struct.unpack('Q', buf)[0]
+                size = block_size * block_count
+                if size > 0:
+                    return size
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _get_linux_device_size(path: str) -> Optional[int]:
+        """Get device size on Linux using ioctl BLKGETSIZE64."""
+        try:
+            import fcntl
+            BLKGETSIZE64 = 0x80081272
+            with open(path, 'rb') as f:
+                buf = bytearray(8)
+                fcntl.ioctl(f.fileno(), BLKGETSIZE64, buf)
+                return struct.unpack('Q', buf)[0]
+        except Exception:
+            pass
+        return None
+
     def list_drives(self) -> List[dict]:
         """List available drives/partitions on the system."""
         drives = []
@@ -259,18 +350,26 @@ class FileCarver:
         self._cancel_event.clear()
         self._pause_event.set()
 
-        # Get source size
+        # Get source size — platform-aware
         try:
             if os.path.isfile(source_path):
                 total_size = os.path.getsize(source_path)
             else:
-                # Block device — seek to end
-                with open(source_path, 'rb') as f:
-                    f.seek(0, 2)
-                    total_size = f.tell()
+                total_size = self._get_device_size(source_path)
         except Exception as e:
-            self.progress.status = 'error'
-            self.progress.error = str(e)
+            self.progress = ScanProgress(status='error', error=str(e))
+            return False
+
+        # Guard: if size detection failed, don't fake a scan
+        if not total_size or total_size <= 0:
+            self.progress = ScanProgress(
+                status='error',
+                error=(
+                    f'Could not determine size of "{source_path}". '
+                    f'Make sure the path is correct and you have permission to read it. '
+                    f'On macOS, try the raw device (e.g. /dev/rdisk2) or run with sudo.'
+                )
+            )
             return False
 
         self.progress = ScanProgress(
@@ -447,9 +546,18 @@ class FileCarver:
                     self.progress.current_offset = offset
                     self.progress.elapsed = time.time() - self.progress.start_time
 
-            self.progress.status = 'complete'
-            self.progress.scanned_bytes = self.progress.total_bytes
+            # Final state — only "complete" if we actually scanned something
             self.progress.elapsed = time.time() - self.progress.start_time
+
+            if self.progress.scanned_bytes == 0:
+                self.progress.status = 'error'
+                self.progress.error = (
+                    'Scan finished but read 0 bytes. '
+                    'The device may be empty, unreadable, or requires different permissions.'
+                )
+            else:
+                self.progress.status = 'complete'
+                self.progress.scanned_bytes = self.progress.total_bytes
 
         except PermissionError:
             self.progress.status = 'error'
