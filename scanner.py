@@ -190,7 +190,23 @@ class FileCarver:
         if dev_name.startswith('r'):
             dev_name = dev_name[1:]
 
-        # Try diskutil info
+        # Try diskutil -plist first — the exact call the drive list uses,
+        # so if the drive list showed a size, this will too
+        try:
+            import plistlib
+            result = subprocess.run(
+                ['diskutil', 'info', '-plist', dev_name],
+                capture_output=True, timeout=10
+            )
+            if result.returncode == 0:
+                di = plistlib.loads(result.stdout)
+                size = int(di.get('TotalSize', 0) or 0)
+                if size > 0:
+                    return size
+        except Exception:
+            pass
+
+        # Text-output fallback
         try:
             result = subprocess.run(
                 ['diskutil', 'info', dev_name],
@@ -380,17 +396,36 @@ class FileCarver:
             self.progress = ScanProgress(status='error', error=str(e))
             return False
 
-        # Guard: if size detection failed, don't fake a scan
+        # If size detection failed, verify we can READ the device at all
+        # (with an honest error if not), then scan in unknown-size mode:
+        # read until the end, no percentage. Never refuse to scan a
+        # readable drive just because its size is unknown.
         if not total_size or total_size <= 0:
-            self.progress = ScanProgress(
-                status='error',
-                error=(
-                    f'Could not read the size of this drive. '
-                    f'Close SlugRecover and reopen it — your computer will '
-                    f'ask for your password to allow access.'
-                )
-            )
-            return False
+            try:
+                with open(source_path, 'rb') as _probe:
+                    if not _probe.read(4096):
+                        raise OSError('The drive returned no data')
+            except PermissionError:
+                is_admin = hasattr(os, 'geteuid') and os.geteuid() == 0
+                if is_admin:
+                    msg = ('This drive refused access even with admin '
+                           'rights. If it is the drive macOS is running '
+                           'from, it cannot be scanned while in use — '
+                           'try scanning a memory card or external drive '
+                           'instead.')
+                else:
+                    msg = ('SlugRecover needs permission to read this '
+                           'drive. Close this window and start '
+                           'SlugRecover again, and answer Y when it asks '
+                           'about scanning real drives.')
+                self.progress = ScanProgress(status='error', error=msg)
+                return False
+            except OSError as e:
+                self.progress = ScanProgress(
+                    status='error',
+                    error=f'This drive could not be read: {e}')
+                return False
+            total_size = 0  # unknown — scan until end of device
 
         self.progress = ScanProgress(
             total_bytes=total_size,
@@ -461,7 +496,8 @@ class FileCarver:
                 # 4KB window lets validators verify a SECOND audio frame
                 peek_size = max(max_header_len, 4096)
 
-                while offset < self.progress.total_bytes:
+                while self.progress.total_bytes == 0 or offset < self.progress.total_bytes:
+                    # (total_bytes == 0 means size unknown: read to EOF)
                     # Check cancel
                     if self._cancel_event.is_set():
                         return
@@ -539,8 +575,9 @@ class FileCarver:
                             if file_size < sig.min_size:
                                 continue
 
-                            # Cap at remaining source
-                            file_size = min(file_size, self.progress.total_bytes - abs_offset)
+                            # Cap at remaining source (when size known)
+                            if self.progress.total_bytes:
+                                file_size = min(file_size, self.progress.total_bytes - abs_offset)
 
                             carved = CarvedFile(
                                 signature=sig,
@@ -586,7 +623,11 @@ class FileCarver:
                         offset += buf_len - overlap
                     else:
                         offset += buf_len  # short read = end of source
-                    self.progress.scanned_bytes = min(offset, self.progress.total_bytes)
+                        if self.progress.total_bytes == 0:
+                            break  # unknown-size mode: EOF reached
+                    self.progress.scanned_bytes = (
+                        min(offset, self.progress.total_bytes)
+                        if self.progress.total_bytes else offset)
                     self.progress.current_offset = offset
                     self.progress.elapsed = time.time() - self.progress.start_time
 
@@ -601,7 +642,11 @@ class FileCarver:
                 )
             else:
                 self.progress.status = 'complete'
-                self.progress.scanned_bytes = self.progress.total_bytes
+                if self.progress.total_bytes:
+                    self.progress.scanned_bytes = self.progress.total_bytes
+                else:
+                    # Unknown-size mode: we now know the real size
+                    self.progress.total_bytes = self.progress.scanned_bytes = offset
 
         except PermissionError:
             self.progress.status = 'error'
