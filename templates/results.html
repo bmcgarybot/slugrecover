@@ -2,88 +2,35 @@
 {% block title %}SlugRecover — Results{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>📁 Recovery Results</h1>
-    <p>Browse and recover files found during your last scan.</p>
-</div>
-
-<div class="step-card">
-    <div class="results-toolbar">
-        <div class="results-count">
-            <span id="results-count">0</span> files found
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-sm btn-secondary" onclick="selectAll()">Select All</button>
-            <button class="btn btn-sm btn-secondary" onclick="selectNone()">Select None</button>
-            <button class="btn btn-sm btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>
-                💾 Recover Selected (0)
-            </button>
-            <button class="btn btn-sm btn-success" onclick="recoverAll()">
-                ✅ Recover All
-            </button>
+<div class="card compact">
+    <div class="results-bar">
+        <span class="card-label">📁 <span id="results-count">0</span> files found</span>
+        <div class="btn-row" style="margin:0;">
+            <button class="btn btn-xs" onclick="selectAll()">Select All</button>
+            <button class="btn btn-xs" onclick="selectNone()">None</button>
+            <button class="btn btn-xs btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>💾 Recover (0)</button>
+            <button class="btn btn-xs btn-success" onclick="recoverAll()">✅ Recover All</button>
         </div>
     </div>
 
-    <div class="form-group">
+    <div class="form-group" style="margin-bottom:12px;">
         <label class="form-label">Save To</label>
         <input type="text" id="output-dir" value="{{ settings.output_dir }}">
     </div>
 
     <div class="results-grid" id="results-grid">
-        <div class="empty-state" style="grid-column:1/-1;">
+        <div class="empty-state">
             <div class="icon">🔍</div>
-            <p>No scan results yet.<br>Run a scan from the Dashboard first.</p>
+            <p>No results yet. Run a scan from the Dashboard.</p>
         </div>
     </div>
 </div>
-
-<!-- Recovery Stats -->
-<div class="step-card" id="stats-card" style="display:none;">
-    <div class="step-header">
-        <div class="step-number" style="background:linear-gradient(135deg, var(--green), #27ae60);">📊</div>
-        <div>
-            <div class="step-title">Recovery Statistics</div>
-        </div>
-    </div>
-    <div class="stats-grid" id="recovery-stats"></div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', () => {
     loadResults();
-
-    fetch('/api/stats')
-        .then(r => r.json())
-        .then(data => {
-            if (data.total_files > 0) {
-                const statsCard = document.getElementById('stats-card');
-                const statsGrid = document.getElementById('recovery-stats');
-                if (statsCard) statsCard.style.display = 'block';
-                if (statsGrid) {
-                    statsGrid.innerHTML = `
-                        <div class="stat-card">
-                            <div class="stat-value">${data.total_files}</div>
-                            <div class="stat-label">Files Recovered</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">${formatBytes(data.total_size)}</div>
-                            <div class="stat-label">Total Size</div>
-                        </div>
-                    `;
-                    for (const [type, info] of Object.entries(data.by_type)) {
-                        statsGrid.innerHTML += `
-                            <div class="stat-card">
-                                <div class="stat-value">${info.count}</div>
-                                <div class="stat-label">${type}</div>
-                            </div>
-                        `;
-                    }
-                }
-            }
-        });
 });
 </script>
 {% endblock %}
