@@ -127,9 +127,21 @@ class FileCarver:
         self._cancel_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()  # Start unpaused
+        self._log_file = None
         self._scan_thread: Optional[threading.Thread] = None
         self._source_path: Optional[str] = None
         self._signatures: List[FileSignature] = []
+
+    def _log(self, msg: str):
+        """Write to scan log file for troubleshooting."""
+        try:
+            if self._log_file:
+                import datetime
+                ts = datetime.datetime.now().strftime('%H:%M:%S')
+                self._log_file.write(f"[{ts}] {msg}\n")
+                self._log_file.flush()
+        except Exception:
+            pass
 
     # ─── Device Size Detection ───────────────────────────────────────
 
@@ -386,6 +398,17 @@ class FileCarver:
             start_time=time.time(),
         )
 
+        # Open scan log for troubleshooting
+        try:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scan.log')
+            self._log_file = open(log_path, 'w')
+            self._log(f"Scan started: {source_path}")
+            self._log(f"Size: {self._human_size(total_size)} ({total_size} bytes)")
+            self._log(f"Signatures: {len(self._signatures)} active")
+            self._log(f"Chunk size: {self.chunk_size} bytes")
+        except Exception:
+            self._log_file = None
+
         self._scan_thread = threading.Thread(target=self._scan_worker, daemon=True)
         self._scan_thread.start()
         return True
@@ -528,6 +551,10 @@ class FileCarver:
                                 ext = sig.extension
                                 self.progress.files_found[ext] = self.progress.files_found.get(ext, 0) + 1
                                 self.progress.total_files += 1
+                                # Log to scan log
+                                self._log(f"FOUND {sig.name} ({sig.extension}) at 0x{abs_offset:X}, "
+                                         f"size={self._human_size(file_size)}, "
+                                         f"parsed={'yes' if file_size != sig.max_size else 'MAX_SIZE'}")
 
                             matched = True
                             # Skip past this file to avoid finding embedded files

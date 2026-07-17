@@ -207,34 +207,104 @@ def parse_riff_size(data: bytes, max_read: int = 2 * 1024 * 1024 * 1024) -> Opti
 
 def parse_bmp_size(data: bytes, max_read: int = 50 * 1024 * 1024) -> Optional[int]:
     try:
-        if len(data) < 6:
+        if len(data) < 26:
             return None
         size = struct.unpack('<I', data[2:6])[0]
-        return min(size, max_read) if size >= 54 else None
+        # BMP: validate basic header fields
+        if size < 54 or size > max_read:
+            return None
+        # Check reserved bytes (should be 0)
+        if data[6:10] != b'\x00\x00\x00\x00':
+            return None
+        # Check data offset is reasonable
+        data_offset = struct.unpack('<I', data[10:14])[0]
+        if data_offset < 14 or data_offset > size:
+            return None
+        # Width/height sanity
+        width = struct.unpack('<i', data[18:22])[0]
+        height = abs(struct.unpack('<i', data[22:26])[0])
+        if width <= 0 or width > 65536 or height <= 0 or height > 65536:
+            return None
+        return size
     except Exception:
         return None
 
 
 def parse_mp3_size(data: bytes, max_read: int = 50 * 1024 * 1024) -> Optional[int]:
+    """Walk MP3 frames to find actual file size, not just return max."""
     try:
+        BITRATES = {
+            # MPEG1 Layer3
+            (3, 1): [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0],
+            # MPEG1 Layer2
+            (3, 2): [0,32,48,56,64,80,96,112,128,160,192,224,256,320,384,0],
+            # MPEG2/2.5 Layer3
+            (2, 1): [0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0],
+        }
+        SAMPLERATES = {
+            3: [44100,48000,32000],  # MPEG1
+            2: [22050,24000,16000],  # MPEG2
+            0: [11025,12000,8000],   # MPEG2.5
+        }
+
         offset = 0
         if data[:3] == b'ID3' and len(data) > 10:
             tag_size = ((data[6] & 0x7f) << 21 | (data[7] & 0x7f) << 14 |
                        (data[8] & 0x7f) << 7 | (data[9] & 0x7f))
             offset = tag_size + 10
+
         frame_count = 0
-        pos = offset
-        limit = min(len(data), 256 * 1024)
-        while pos < limit - 2:
-            if data[pos] == 0xff and (data[pos + 1] & 0xe0) == 0xe0:
-                frame_count += 1
-                pos += 417
-            else:
-                pos += 1
-        if frame_count > 10:
-            return min(len(data), max_read)
+        last_valid = offset
+        limit = min(len(data), max_read)
+
+        while offset < limit - 4:
+            if data[offset] != 0xff or (data[offset + 1] & 0xe0) != 0xe0:
+                if frame_count > 5:
+                    break  # End of audio data
+                offset += 1
+                continue
+
+            version = (data[offset + 1] >> 3) & 0x03
+            layer = (data[offset + 1] >> 1) & 0x03
+            bitrate_idx = (data[offset + 2] >> 4) & 0x0f
+            srate_idx = (data[offset + 2] >> 2) & 0x03
+            padding = (data[offset + 2] >> 1) & 0x01
+
+            if version == 1 or layer == 0 or bitrate_idx in (0, 15) or srate_idx == 3:
+                if frame_count > 5:
+                    break
+                offset += 1
+                continue
+
+            key = (version, layer)
+            if key not in BITRATES or srate_idx >= len(SAMPLERATES.get(version, [])):
+                offset += 1
+                continue
+
+            bitrate = BITRATES[key][bitrate_idx] * 1000
+            srate = SAMPLERATES[version][srate_idx]
+            if bitrate == 0 or srate == 0:
+                offset += 1
+                continue
+
+            if layer == 3:  # Layer 1
+                frame_len = (12 * bitrate // srate + padding) * 4
+            else:  # Layer 2, 3
+                frame_len = 144 * bitrate // srate + padding
+
+            if frame_len < 21:
+                offset += 1
+                continue
+
+            offset += frame_len
+            last_valid = offset
+            frame_count += 1
+
+        if frame_count >= 10:
+            return min(last_valid, max_read)
         return None
     except Exception:
+        return None
         return None
 
 
@@ -350,6 +420,100 @@ def check_psd(data: bytes) -> bool:
     return len(data) >= 4 and data[0:4] == b'8BPS'
 
 
+def check_aac_adts(data: bytes) -> bool:
+    """Validate AAC ADTS frame header — reject false positives."""
+    if len(data) < 7:
+        return False
+    # Sync word is 0xFFF (12 bits) — we matched 0xFFF1, check profile/srate
+    profile = (data[2] >> 6) & 0x03
+    srate_idx = (data[2] >> 2) & 0x0f
+    channel_cfg = ((data[2] & 0x01) << 2) | ((data[3] >> 6) & 0x03)
+    # Valid sample rate index (0-12), valid channels (1-7)
+    if srate_idx > 12 or channel_cfg == 0 or channel_cfg > 7:
+        return False
+    # Frame length from header
+    frame_len = ((data[3] & 0x03) << 11) | (data[4] << 3) | ((data[5] >> 5) & 0x07)
+    if frame_len < 7 or frame_len > 8192:
+        return False
+    # Check for next frame sync at expected position
+    if len(data) > frame_len + 1:
+        if data[frame_len] == 0xff and (data[frame_len + 1] & 0xf0) == 0xf0:
+            return True  # Consecutive frame found — very likely real AAC
+        return False  # No next frame — probably garbage
+    return True  # Not enough data to check, give benefit of doubt
+
+
+def parse_aac_size(data: bytes, max_read: int = 50 * 1024 * 1024) -> Optional[int]:
+    """Walk ADTS frames to find actual AAC file size."""
+    try:
+        pos = 0
+        frame_count = 0
+        limit = min(len(data), max_read)
+        while pos < limit - 7:
+            if data[pos] != 0xff or (data[pos + 1] & 0xf0) != 0xf0:
+                if frame_count > 3:
+                    return pos  # End of AAC data
+                return None
+            frame_len = ((data[pos + 3] & 0x03) << 11) | (data[pos + 4] << 3) | ((data[pos + 5] >> 5) & 0x07)
+            if frame_len < 7:
+                if frame_count > 3:
+                    return pos
+                return None
+            pos += frame_len
+            frame_count += 1
+        if frame_count >= 3:
+            return min(pos, max_read)
+        return None
+    except Exception:
+        return None
+
+
+def check_ico(data: bytes) -> bool:
+    """Validate ICO header — reject \x00\x00\x01\x00 false positives."""
+    if len(data) < 6:
+        return False
+    # Bytes 4-5: number of images (1-255 reasonable)
+    count = struct.unpack('<H', data[4:6])[0]
+    if count == 0 or count > 255:
+        return False
+    # Each image entry is 16 bytes, starting at offset 6
+    if len(data) < 6 + count * 16:
+        return False
+    for i in range(min(count, 3)):  # Check first 3 entries
+        base = 6 + i * 16
+        width = data[base] or 256
+        height = data[base + 1] or 256
+        # Data size and offset
+        img_size = struct.unpack('<I', data[base + 8:base + 12])[0]
+        img_offset = struct.unpack('<I', data[base + 12:base + 16])[0]
+        if img_size == 0 or img_offset < 6 + count * 16:
+            return False
+        if width > 256 or height > 256:
+            return False
+    return True
+
+
+def parse_ico_size(data: bytes, max_read: int = 1 * 1024 * 1024) -> Optional[int]:
+    """Parse ICO header to determine actual file size."""
+    try:
+        if len(data) < 6:
+            return None
+        count = struct.unpack('<H', data[4:6])[0]
+        if count == 0 or count > 255:
+            return None
+        end = 0
+        for i in range(count):
+            base = 6 + i * 16
+            if base + 16 > len(data):
+                return None
+            img_size = struct.unpack('<I', data[base + 8:base + 12])[0]
+            img_offset = struct.unpack('<I', data[base + 12:base + 16])[0]
+            end = max(end, img_offset + img_size)
+        return min(end, max_read) if end > 0 else None
+    except Exception:
+        return None
+
+
 # ─── Signature Database ────────────────────────────────────────────────────
 
 SIGNATURES: List[FileSignature] = [
@@ -412,6 +576,8 @@ SIGNATURES: List[FileSignature] = [
         name="ICO", extension="ico", category="image",
         header=b'\x00\x00\x01\x00',
         max_size=1 * 1024 * 1024, min_size=100,
+        extra_check=check_ico,
+        parse_size=parse_ico_size,
         color="#95a5a6", icon="🔷",
     ),
 
@@ -545,7 +711,9 @@ SIGNATURES: List[FileSignature] = [
     FileSignature(
         name="AAC", extension="aac", category="audio",
         header=b'\xff\xf1',
-        max_size=50 * 1024 * 1024, min_size=1024,
+        max_size=50 * 1024 * 1024, min_size=4 * 1024,
+        extra_check=check_aac_adts,
+        parse_size=parse_aac_size,
         color="#9b59b6", icon="🎵",
     ),
     FileSignature(
