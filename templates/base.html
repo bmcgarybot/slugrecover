@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}SlugRecover{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="nav-icon">🐌</span>
+            <span class="nav-title">SlugRecover</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
+                <span class="link-icon">🏠</span> Dashboard
+            </a>
+            <a href="/results" class="nav-link {% if request.path == '/results' %}active{% endif %}">
+                <span class="link-icon">📁</span> Results
+            </a>
+            <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">
+                <span class="link-icon">⚙️</span> Settings
+            </a>
+        </div>
+        <div class="nav-status" id="nav-status">
+            <span class="status-badge idle" id="global-status">Idle</span>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <span>🐌 SlugRecover v1.0 — File Recovery & Carving Tool</span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,390 @@
+"""
+SlugRecover — Core File Carving Engine
+Scans raw disks/drives/disk images for deleted files using byte signature scanning.
+"""
+
+import os
+import time
+import threading
+import platform
+import struct
+from typing import Optional, List, Dict, Callable
+from dataclasses import dataclass, field
+
+from signatures import FileSignature, SIGNATURES, get_signatures_for_types
+
+
+@dataclass
+class CarvedFile:
+    """Represents a file found during scanning."""
+    signature: FileSignature
+    offset: int              # Byte offset in source
+    size: int                # Estimated file size
+    data: Optional[bytes] = None  # Raw file data (loaded on recovery)
+    recovered: bool = False
+    recovery_path: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    valid: bool = True
+
+    @property
+    def size_human(self) -> str:
+        """Human-readable file size."""
+        if self.size < 1024:
+            return f"{self.size} B"
+        elif self.size < 1024 * 1024:
+            return f"{self.size / 1024:.1f} KB"
+        elif self.size < 1024 * 1024 * 1024:
+            return f"{self.size / (1024 * 1024):.1f} MB"
+        else:
+            return f"{self.size / (1024 * 1024 * 1024):.2f} GB"
+
+    def to_dict(self) -> dict:
+        return {
+            'id': f"{self.signature.extension}_{self.offset}",
+            'type': self.signature.name,
+            'extension': self.signature.extension,
+            'category': self.signature.category,
+            'offset': self.offset,
+            'offset_hex': f"0x{self.offset:X}",
+            'size': self.size,
+            'size_human': self.size_human,
+            'color': self.signature.color,
+            'icon': self.signature.icon,
+            'recovered': self.recovered,
+            'recovery_path': self.recovery_path,
+            'thumbnail': self.thumbnail_path,
+            'valid': self.valid,
+        }
+
+
+@dataclass
+class ScanProgress:
+    """Tracks scanning progress."""
+    total_bytes: int = 0
+    scanned_bytes: int = 0
+    files_found: Dict[str, int] = field(default_factory=dict)
+    total_files: int = 0
+    status: str = "idle"        # idle, scanning, paused, complete, cancelled, error
+    start_time: float = 0.0
+    elapsed: float = 0.0
+    error: Optional[str] = None
+    current_offset: int = 0
+
+    @property
+    def percent(self) -> float:
+        if self.total_bytes == 0:
+            return 0
+        return min(100.0, (self.scanned_bytes / self.total_bytes) * 100)
+
+    @property
+    def eta_seconds(self) -> Optional[float]:
+        if self.elapsed <= 0 or self.scanned_bytes <= 0:
+            return None
+        rate = self.scanned_bytes / self.elapsed
+        remaining = self.total_bytes - self.scanned_bytes
+        return remaining / rate if rate > 0 else None
+
+    @property
+    def speed_human(self) -> str:
+        if self.elapsed <= 0:
+            return "—"
+        rate = self.scanned_bytes / self.elapsed
+        if rate < 1024:
+            return f"{rate:.0f} B/s"
+        elif rate < 1024 * 1024:
+            return f"{rate / 1024:.1f} KB/s"
+        else:
+            return f"{rate / (1024 * 1024):.1f} MB/s"
+
+    def to_dict(self) -> dict:
+        eta = self.eta_seconds
+        return {
+            'total_bytes': self.total_bytes,
+            'scanned_bytes': self.scanned_bytes,
+            'percent': round(self.percent, 2),
+            'files_found': dict(self.files_found),
+            'total_files': self.total_files,
+            'status': self.status,
+            'elapsed': round(self.elapsed, 1),
+            'eta': round(eta, 1) if eta else None,
+            'speed': self.speed_human,
+            'error': self.error,
+            'current_offset': self.current_offset,
+        }
+
+
+class FileCarver:
+    """Core file carving engine — scans raw data sources for file signatures."""
+
+    def __init__(self, chunk_size: int = 512):
+        self.chunk_size = chunk_size  # Scan alignment (sector size)
+        self.read_buffer_size = 4 * 1024 * 1024  # 4MB read buffer
+        self.progress = ScanProgress()
+        self.carved_files: List[CarvedFile] = []
+        self._lock = threading.Lock()
+        self._cancel_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()  # Start unpaused
+        self._scan_thread: Optional[threading.Thread] = None
+        self._source_path: Optional[str] = None
+        self._signatures: List[FileSignature] = []
+
+    def list_drives(self) -> List[dict]:
+        """List available drives/partitions on the system."""
+        drives = []
+        system = platform.system()
+
+        if system == 'Linux':
+            # List block devices
+            try:
+                if os.path.exists('/proc/partitions'):
+                    with open('/proc/partitions', 'r') as f:
+                        lines = f.readlines()[2:]  # Skip header
+                    for line in lines:
+                        parts = line.strip().split()
+                        if len(parts) >= 4:
+                            name = parts[3]
+                            size_blocks = int(parts[2]) * 1024
+                            path = f"/dev/{name}"
+                            drives.append({
+                                'path': path,
+                                'name': name,
+                                'size': size_blocks,
+                                'size_human': self._human_size(size_blocks),
+                                'type': 'partition' if any(c.isdigit() for c in name) else 'disk',
+                            })
+            except Exception:
+                pass
+
+        elif system == 'Darwin':
+            # macOS — list /dev/disk*
+            try:
+                for name in os.listdir('/dev'):
+                    if name.startswith('disk') or name.startswith('rdisk'):
+                        path = f"/dev/{name}"
+                        drives.append({
+                            'path': path,
+                            'name': name,
+                            'size': 0,
+                            'size_human': 'Unknown',
+                            'type': 'disk',
+                        })
+            except Exception:
+                pass
+
+        elif system == 'Windows':
+            # Windows — list physical drives
+            for i in range(16):
+                path = f"\\\\.\\PhysicalDrive{i}"
+                try:
+                    with open(path, 'rb') as f:
+                        f.seek(0, 2)
+                        size = f.tell()
+                    drives.append({
+                        'path': path,
+                        'name': f"PhysicalDrive{i}",
+                        'size': size,
+                        'size_human': self._human_size(size),
+                        'type': 'disk',
+                    })
+                except Exception:
+                    continue
+
+        return drives
+
+    def start_scan(self, source_path: str, file_types: Optional[List[str]] = None,
+                   chunk_size: Optional[int] = None) -> bool:
+        """Start scanning a source in a background thread."""
+        if self.progress.status == 'scanning':
+            return False
+
+        if chunk_size:
+            self.chunk_size = chunk_size
+
+        self._source_path = source_path
+        self._signatures = get_signatures_for_types(file_types) if file_types else SIGNATURES
+        self.carved_files = []
+        self._cancel_event.clear()
+        self._pause_event.set()
+
+        # Get source size
+        try:
+            if os.path.isfile(source_path):
+                total_size = os.path.getsize(source_path)
+            else:
+                # Block device — seek to end
+                with open(source_path, 'rb') as f:
+                    f.seek(0, 2)
+                    total_size = f.tell()
+        except Exception as e:
+            self.progress.status = 'error'
+            self.progress.error = str(e)
+            return False
+
+        self.progress = ScanProgress(
+            total_bytes=total_size,
+            status='scanning',
+            start_time=time.time(),
+        )
+
+        self._scan_thread = threading.Thread(target=self._scan_worker, daemon=True)
+        self._scan_thread.start()
+        return True
+
+    def pause_scan(self):
+        """Pause the current scan."""
+        if self.progress.status == 'scanning':
+            self._pause_event.clear()
+            self.progress.status = 'paused'
+
+    def resume_scan(self):
+        """Resume a paused scan."""
+        if self.progress.status == 'paused':
+            self._pause_event.set()
+            self.progress.status = 'scanning'
+
+    def cancel_scan(self):
+        """Cancel the current scan."""
+        self._cancel_event.set()
+        self._pause_event.set()  # Unpause to allow thread to exit
+        self.progress.status = 'cancelled'
+
+    def get_progress(self) -> dict:
+        """Get current scan progress."""
+        return self.progress.to_dict()
+
+    def get_results(self) -> List[dict]:
+        """Get all carved files."""
+        with self._lock:
+            return [f.to_dict() for f in self.carved_files]
+
+    def get_carved_file(self, file_id: str) -> Optional[CarvedFile]:
+        """Get a specific carved file by ID."""
+        with self._lock:
+            for f in self.carved_files:
+                if f"{f.signature.extension}_{f.offset}" == file_id:
+                    return f
+        return None
+
+    def _scan_worker(self):
+        """Background scanning worker thread."""
+        try:
+            with open(self._source_path, 'rb') as source:
+                offset = 0
+                # Build a quick lookup of header lengths needed
+                max_header_len = max(len(s.header) for s in self._signatures)
+                # For BMFF types, we need more bytes for validation
+                peek_size = max(max_header_len, 16)
+
+                while offset < self.progress.total_bytes:
+                    # Check cancel
+                    if self._cancel_event.is_set():
+                        return
+
+                    # Check pause
+                    self._pause_event.wait()
+
+                    # Read a buffer
+                    source.seek(offset)
+                    buffer = source.read(self.read_buffer_size)
+                    if not buffer:
+                        break
+
+                    buf_len = len(buffer)
+                    pos = 0
+
+                    while pos < buf_len - peek_size:
+                        if self._cancel_event.is_set():
+                            return
+
+                        # Try each signature at this position
+                        matched = False
+                        for sig in self._signatures:
+                            header_len = len(sig.header)
+
+                            # Quick header check
+                            if buffer[pos:pos + header_len] != sig.header:
+                                continue
+
+                            # Get enough data for validation
+                            chunk = buffer[pos:pos + min(peek_size, buf_len - pos)]
+
+                            # Extra validation check
+                            if sig.extra_check and not sig.extra_check(chunk):
+                                continue
+
+                            # Found a match — determine file size
+                            file_size = sig.max_size
+                            abs_offset = offset + pos
+
+                            if sig.parse_size:
+                                # Read more data for size parsing
+                                source.seek(abs_offset)
+                                size_data = source.read(min(sig.max_size, 10 * 1024 * 1024))
+                                parsed_size = sig.parse_size(size_data, sig.max_size)
+                                if parsed_size and parsed_size >= sig.min_size:
+                                    file_size = parsed_size
+                                # Reset source position
+                                source.seek(offset + buf_len)
+
+                            # Validate minimum size
+                            if file_size < sig.min_size:
+                                continue
+
+                            # Cap at remaining source
+                            file_size = min(file_size, self.progress.total_bytes - abs_offset)
+
+                            carved = CarvedFile(
+                                signature=sig,
+                                offset=abs_offset,
+                                size=file_size,
+                            )
+
+                            with self._lock:
+                                self.carved_files.append(carved)
+                                ext = sig.extension
+                                self.progress.files_found[ext] = self.progress.files_found.get(ext, 0) + 1
+                                self.progress.total_files += 1
+
+                            matched = True
+                            # Skip past this file to avoid finding embedded files
+                            skip = max(self.chunk_size, min(file_size, 1024 * 1024))
+                            pos += skip
+                            break
+
+                        if not matched:
+                            pos += self.chunk_size
+
+                    # Update progress
+                    offset += buf_len
+                    self.progress.scanned_bytes = min(offset, self.progress.total_bytes)
+                    self.progress.current_offset = offset
+                    self.progress.elapsed = time.time() - self.progress.start_time
+
+            self.progress.status = 'complete'
+            self.progress.scanned_bytes = self.progress.total_bytes
+            self.progress.elapsed = time.time() - self.progress.start_time
+
+        except PermissionError:
+            self.progress.status = 'error'
+            self.progress.error = 'Permission denied. Run with sudo/admin privileges for raw disk access.'
+        except FileNotFoundError:
+            self.progress.status = 'error'
+            self.progress.error = f'Source not found: {self._source_path}'
+        except Exception as e:
+            self.progress.status = 'error'
+            self.progress.error = str(e)
+
+    @staticmethod
+    def _human_size(size: int) -> str:
+        """Convert bytes to human-readable size."""
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        elif size < 1024 * 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024 * 1024):.2f} GB"
+        else:
+            return f"{size / (1024 * 1024 * 1024 * 1024):.2f} TB"

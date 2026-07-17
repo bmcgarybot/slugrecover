@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}SlugRecover — Settings{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <span class="icon">⚙️</span>
+        <h2>Settings</h2>
+    </div>
+
+    <div class="form-group">
+        <label>Default Output Directory</label>
+        <input type="text" id="settings-output-dir" value="{{ settings.output_dir }}">
+    </div>
+
+    <div class="form-group">
+        <label>Scan Alignment (bytes) — Default: 512 (standard sector size)</label>
+        <select id="settings-chunk-size">
+            <option value="512" {% if settings.chunk_size == 512 %}selected{% endif %}>512 bytes (standard)</option>
+            <option value="1024" {% if settings.chunk_size == 1024 %}selected{% endif %}>1024 bytes</option>
+            <option value="4096" {% if settings.chunk_size == 4096 %}selected{% endif %}>4096 bytes (4K sector)</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>Read Buffer Size (MB) — Larger = faster scan, more RAM</label>
+        <select id="settings-buffer-mb">
+            <option value="1" {% if settings.read_buffer_mb == 1 %}selected{% endif %}>1 MB</option>
+            <option value="4" {% if settings.read_buffer_mb == 4 %}selected{% endif %}>4 MB (default)</option>
+            <option value="8" {% if settings.read_buffer_mb == 8 %}selected{% endif %}>8 MB</option>
+            <option value="16" {% if settings.read_buffer_mb == 16 %}selected{% endif %}>16 MB</option>
+            <option value="32" {% if settings.read_buffer_mb == 32 %}selected{% endif %}>32 MB</option>
+        </select>
+    </div>
+
+    <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="icon">📋</span>
+        <h2>Supported File Types</h2>
+    </div>
+
+    <div class="type-grid">
+        {% for sig in signatures %}
+        <div class="type-checkbox" style="cursor:default;">
+            <span>{{ sig.icon }}</span>
+            <span>{{ sig.name }}</span>
+            <span class="type-badge" style="background:{{ sig.color }}20;color:{{ sig.color }}">
+                .{{ sig.extension }}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
