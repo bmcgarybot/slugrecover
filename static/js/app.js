@@ -21,7 +21,7 @@ function startScan() {
 
     // Get selected file types
     const types = [];
-    document.querySelectorAll('.type-card.checked input[type="checkbox"]').forEach(cb => {
+    document.querySelectorAll('.type-chip.checked input[type="checkbox"], .type-card.checked input[type="checkbox"]').forEach(cb => {
         types.push(cb.value);
     });
 
@@ -424,38 +424,70 @@ function selectDrive(path) {
 
 // ─── File Type Controls ─────────────────────────────────
 
+const TYPE_SEL = '.type-chip, .type-card'; // support both layouts
+
 function toggleType(el) {
     el.classList.toggle('checked');
     const cb = el.querySelector('input[type="checkbox"]');
     if (cb) cb.checked = el.classList.contains('checked');
+    updateTypeSummary();
+}
+
+function toggleTypePanel() {
+    const panel = document.getElementById('type-panel');
+    const arrow = document.getElementById('type-arrow');
+    if (panel) {
+        const show = panel.style.display === 'none';
+        panel.style.display = show ? 'block' : 'none';
+        if (arrow) arrow.classList.toggle('open', show);
+    }
+}
+
+function updateTypeSummary() {
+    const all = document.querySelectorAll(TYPE_SEL);
+    const checked = document.querySelectorAll('.type-chip.checked, .type-card.checked');
+    const el = document.getElementById('type-summary');
+    if (el) {
+        if (checked.length === all.length) el.textContent = `All ${all.length} types selected`;
+        else if (checked.length === 0) el.textContent = 'No types selected';
+        else el.textContent = `${checked.length} of ${all.length} types selected`;
+    }
 }
 
 function selectAllTypes() {
-    document.querySelectorAll('.type-card').forEach(el => {
+    document.querySelectorAll(TYPE_SEL).forEach(el => {
         el.classList.add('checked');
         const cb = el.querySelector('input[type="checkbox"]');
         if (cb) cb.checked = true;
     });
+    updateTypeSummary();
 }
 
 function selectNoTypes() {
-    document.querySelectorAll('.type-card').forEach(el => {
+    document.querySelectorAll(TYPE_SEL).forEach(el => {
         el.classList.remove('checked');
         const cb = el.querySelector('input[type="checkbox"]');
         if (cb) cb.checked = false;
     });
+    updateTypeSummary();
 }
 
 function selectCategory(category) {
-    // Uncheck all first
     selectNoTypes();
-    // Check only the category
-    document.querySelectorAll(`.type-card[data-category="${category}"]`).forEach(el => {
+    document.querySelectorAll(`.type-chip[data-category="${category}"], .type-card[data-category="${category}"]`).forEach(el => {
         el.classList.add('checked');
         const cb = el.querySelector('input[type="checkbox"]');
         if (cb) cb.checked = true;
     });
+    updateTypeSummary();
 }
+
+// Wire up type chip clicks
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.type-chip').forEach(chip => {
+        chip.addEventListener('click', () => toggleType(chip));
+    });
+});
 
 // ─── Settings ───────────────────────────────────────────
 
