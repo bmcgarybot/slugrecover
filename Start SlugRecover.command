@@ -4,7 +4,6 @@
 #  Just double-click this file. It sets everything up for you.
 # ─────────────────────────────────────────────────────────────
 cd "$(dirname "$0")"
-APP_DIR="$(pwd)"
 
 echo ""
 echo "  🐌 Starting SlugRecover..."
@@ -72,46 +71,16 @@ fi
     exit 1
 }
 
-# ── 4. Launch with admin access automatically ────────────────
-#    Uses the standard macOS password dialog (like installing an app).
+# ── 4. Launch ────────────────────────────────────────────────
+echo ""
+echo "  🔑 Type your Mac password below to let SlugRecover"
+echo "     access your drives. (Nothing shows while you type"
+echo "     — that's normal, just type and press Enter.)"
+echo ""
+echo "  ✅ Your browser will open automatically."
+echo "     Keep this window open while you use SlugRecover."
+echo "     Close this window when you're done."
+echo ""
 
-if [ "$EUID" -ne 0 ]; then
-    echo ""
-    echo "  🔑 Your Mac will ask for your password so SlugRecover"
-    echo "     can access drives and memory cards."
-    echo ""
-
-    # Write a temp launch script to avoid quoting hell with osascript
-    LAUNCH_SCRIPT="$APP_DIR/.slugrecover_launch.sh"
-    cat > "$LAUNCH_SCRIPT" << INNERSCRIPT
-#!/bin/bash
-cd '$APP_DIR'
-exec '$APP_DIR/.venv/bin/python' '$APP_DIR/app.py'
-INNERSCRIPT
-    chmod +x "$LAUNCH_SCRIPT"
-
-    ( sleep 3 && open "http://localhost:5678" ) &
-
-    # Native macOS password popup
-    osascript -e "do shell script quoted form of \"$LAUNCH_SCRIPT\" with administrator privileges"
-    EXIT_CODE=$?
-
-    # Clean up temp script
-    rm -f "$LAUNCH_SCRIPT" 2>/dev/null
-
-    if [ $EXIT_CODE -ne 0 ]; then
-        echo ""
-        echo "  ℹ️  Running without admin access."
-        echo "     You can scan disk image files, but not drives directly."
-        echo ""
-        ( sleep 2 && open "http://localhost:5678" ) &
-        exec ./.venv/bin/python app.py
-    fi
-else
-    echo ""
-    echo "  ✅ SlugRecover is starting — your browser will open."
-    echo "     Keep this window open while you use it."
-    echo ""
-    ( sleep 3 && open "http://localhost:5678" ) &
-    exec ./.venv/bin/python app.py
-fi
+( sleep 3 && open "http://localhost:5678" ) &
+exec sudo ./.venv/bin/python app.py
