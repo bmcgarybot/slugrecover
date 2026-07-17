@@ -271,6 +271,86 @@ def api_drives():
         return jsonify({'error': str(e), 'drives': []}), 500
 
 
+@app.route('/api/browse')
+def api_browse():
+    """Browse filesystem directories for the file browser."""
+    path = request.args.get('path', '')
+
+    if not path:
+        if platform.system() == 'Darwin':
+            path = '/Volumes'
+        elif platform.system() == 'Windows':
+            path = 'C:\\'
+        else:
+            path = '/'
+
+    path = os.path.expanduser(path)
+
+    # If it's a file, return it directly
+    if os.path.isfile(path):
+        return jsonify({
+            'current': path,
+            'is_file': True,
+            'items': []
+        })
+
+    if not os.path.isdir(path):
+        # Try parent
+        parent = os.path.dirname(path)
+        if os.path.isdir(parent):
+            path = parent
+        else:
+            path = '/'
+
+    items = []
+    try:
+        # Add parent directory
+        parent = os.path.dirname(path)
+        if parent != path:
+            items.append({
+                'name': '📁 ..',
+                'path': parent,
+                'is_dir': True,
+                'size_human': ''
+            })
+
+        entries = sorted(os.listdir(path), key=lambda x: (not os.path.isdir(os.path.join(path, x)), x.lower()))
+        for entry in entries:
+            if entry.startswith('.'):
+                continue
+            full = os.path.join(path, entry)
+            is_dir = os.path.isdir(full)
+            size_human = ''
+            if not is_dir:
+                try:
+                    size = os.path.getsize(full)
+                    if size < 1024:
+                        size_human = f'{size} B'
+                    elif size < 1024 * 1024:
+                        size_human = f'{size / 1024:.1f} KB'
+                    elif size < 1024 * 1024 * 1024:
+                        size_human = f'{size / (1024*1024):.1f} MB'
+                    else:
+                        size_human = f'{size / (1024*1024*1024):.2f} GB'
+                except OSError:
+                    size_human = '?'
+
+            items.append({
+                'name': entry,
+                'path': full,
+                'is_dir': is_dir,
+                'size_human': size_human
+            })
+    except PermissionError:
+        pass
+
+    return jsonify({
+        'current': path,
+        'is_file': False,
+        'items': items
+    })
+
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """Get or update settings."""
