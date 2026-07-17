@@ -24,7 +24,7 @@ carver = FileCarver()
 
 # Default settings
 settings = {
-    'output_dir': os.path.expanduser('~/SlugRecover_Output'),
+    'output_dir': os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Recovered'),
     'chunk_size': 512,
     'read_buffer_mb': 4,
 }
