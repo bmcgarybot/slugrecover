@@ -8,7 +8,8 @@ import time
 import threading
 import platform
 import struct
-from typing import Optional, List, Dict, Callable
+import subprocess
+from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 
 from signatures import FileSignature, SIGNATURES, get_signatures_for_types
@@ -18,9 +19,9 @@ from signatures import FileSignature, SIGNATURES, get_signatures_for_types
 class CarvedFile:
     """Represents a file found during scanning."""
     signature: FileSignature
-    offset: int              # Byte offset in source
-    size: int                # Estimated file size
-    data: Optional[bytes] = None  # Raw file data (loaded on recovery)
+    offset: int
+    size: int
+    data: Optional[bytes] = None
     recovered: bool = False
     recovery_path: Optional[str] = None
     thumbnail_path: Optional[str] = None
@@ -28,7 +29,6 @@ class CarvedFile:
 
     @property
     def size_human(self) -> str:
-        """Human-readable file size."""
         if self.size < 1024:
             return f"{self.size} B"
         elif self.size < 1024 * 1024:
@@ -64,7 +64,7 @@ class ScanProgress:
     scanned_bytes: int = 0
     files_found: Dict[str, int] = field(default_factory=dict)
     total_files: int = 0
-    status: str = "idle"        # idle, scanning, paused, complete, cancelled, error
+    status: str = "idle"  # idle, scanning, paused, complete, cancelled, error
     start_time: float = 0.0
     elapsed: float = 0.0
     error: Optional[str] = None
@@ -117,17 +117,130 @@ class FileCarver:
     """Core file carving engine — scans raw data sources for file signatures."""
 
     def __init__(self, chunk_size: int = 512):
-        self.chunk_size = chunk_size  # Scan alignment (sector size)
-        self.read_buffer_size = 4 * 1024 * 1024  # 4MB read buffer
+        self.chunk_size = chunk_size
+        self.read_buffer_size = 4 * 1024 * 1024  # 4MB
         self.progress = ScanProgress()
         self.carved_files: List[CarvedFile] = []
         self._lock = threading.Lock()
         self._cancel_event = threading.Event()
         self._pause_event = threading.Event()
-        self._pause_event.set()  # Start unpaused
+        self._pause_event.set()
         self._scan_thread: Optional[threading.Thread] = None
         self._source_path: Optional[str] = None
         self._signatures: List[FileSignature] = []
+
+    # ─── Device Size Detection ───────────────────────────────────────────
+
+    @staticmethod
+    def _get_device_size(path: str) -> Optional[int]:
+        """
+        Get the size of a block device, handling platform quirks.
+
+        - Linux:  seek(0, 2) works, or use ioctl BLKGETSIZE64
+        - macOS:  seek(0, 2) returns 0 on raw devices — use diskutil
+        - Windows: seek(0, 2) works on \\\\.\\PhysicalDriveN
+        """
+        system = platform.system()
+
+        # Try seek first (works on Linux, Windows, and disk images)
+        try:
+            with open(path, 'rb') as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size > 0:
+                    return size
+        except Exception:
+            pass
+
+        # macOS: seek returns 0 for raw devices — use diskutil or ioctl
+        if system == 'Darwin':
+            size = FileCarver._get_macos_device_size(path)
+            if size and size > 0:
+                return size
+
+        # Linux: try ioctl BLKGETSIZE64
+        if system == 'Linux':
+            size = FileCarver._get_linux_device_size(path)
+            if size and size > 0:
+                return size
+
+        return None
+
+    @staticmethod
+    def _get_macos_device_size(path: str) -> Optional[int]:
+        """Get device size on macOS using diskutil or ioctl."""
+        import re
+
+        # Normalize path: /dev/rdiskN -> diskN for diskutil
+        dev_name = os.path.basename(path)
+        if dev_name.startswith('r'):
+            dev_name = dev_name[1:]  # rdisk2 -> disk2
+
+        # Try diskutil info
+        try:
+            result = subprocess.run(
+                ['diskutil', 'info', dev_name],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    # Look for "Disk Size:" or "Total Size:"
+                    if 'Disk Size:' in line or 'Total Size:' in line:
+                        # Extract byte count from parenthesized value
+                        # e.g. "Disk Size:  31.9 GB (31914983424 Bytes)"
+                        match = re.search(r'\((\d+)\s*[Bb]ytes?\)', line)
+                        if match:
+                            return int(match.group(1))
+                    # Also check "Partition Size:"
+                    if 'Partition Size:' in line:
+                        match = re.search(r'\((\d+)\s*[Bb]ytes?\)', line)
+                        if match:
+                            return int(match.group(1))
+        except Exception:
+            pass
+
+        # Try ioctl DKIOCGETBLOCKCOUNT + DKIOCGETBLOCKSIZE
+        try:
+            import fcntl
+            DKIOCGETBLOCKSIZE = 0x40046418
+            DKIOCGETBLOCKCOUNT = 0x40086419
+
+            with open(path, 'rb') as f:
+                fd = f.fileno()
+                # Get block size (usually 512)
+                buf = bytearray(4)
+                fcntl.ioctl(fd, DKIOCGETBLOCKSIZE, buf)
+                block_size = struct.unpack('I', buf)[0]
+
+                # Get block count
+                buf = bytearray(8)
+                fcntl.ioctl(fd, DKIOCGETBLOCKCOUNT, buf)
+                block_count = struct.unpack('Q', buf)[0]
+
+                size = block_size * block_count
+                if size > 0:
+                    return size
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _get_linux_device_size(path: str) -> Optional[int]:
+        """Get device size on Linux using ioctl BLKGETSIZE64."""
+        try:
+            import fcntl
+            BLKGETSIZE64 = 0x80081272
+
+            with open(path, 'rb') as f:
+                buf = bytearray(8)
+                fcntl.ioctl(f.fileno(), BLKGETSIZE64, buf)
+                return struct.unpack('Q', buf)[0]
+        except Exception:
+            pass
+        return None
+
+    # ─── Drive Listing ───────────────────────────────────────────────────
 
     def list_drives(self) -> List[dict]:
         """List available drives/partitions on the system."""
@@ -135,11 +248,10 @@ class FileCarver:
         system = platform.system()
 
         if system == 'Linux':
-            # List block devices
             try:
                 if os.path.exists('/proc/partitions'):
                     with open('/proc/partitions', 'r') as f:
-                        lines = f.readlines()[2:]  # Skip header
+                        lines = f.readlines()[2:]
                     for line in lines:
                         parts = line.strip().split()
                         if len(parts) >= 4:
@@ -157,40 +269,61 @@ class FileCarver:
                 pass
 
         elif system == 'Darwin':
-            # macOS — list /dev/disk*
+            # Use diskutil list to get real disk info
             try:
-                for name in os.listdir('/dev'):
-                    if name.startswith('disk') or name.startswith('rdisk'):
-                        path = f"/dev/{name}"
+                result = subprocess.run(
+                    ['diskutil', 'list', '-plist'],
+                    capture_output=True, timeout=10
+                )
+                # Fallback: just list /dev/disk* with sizes
+                for name in sorted(os.listdir('/dev')):
+                    if not name.startswith('disk'):
+                        continue
+                    # Skip partition-less character devices (rdisk*)
+                    if name.startswith('rdisk'):
+                        continue
+                    path = f"/dev/{name}"
+                    size = self._get_device_size(path)
+                    # Skip tiny/zero entries (they're usually control nodes)
+                    if size and size > 0:
                         drives.append({
                             'path': path,
+                            'name': name,
+                            'size': size,
+                            'size_human': self._human_size(size),
+                            'type': 'partition' if 's' in name[4:] else 'disk',
+                        })
+            except Exception:
+                # Bare fallback
+                for name in sorted(os.listdir('/dev')):
+                    if name.startswith('disk') and not name.startswith('rdisk'):
+                        drives.append({
+                            'path': f"/dev/{name}",
                             'name': name,
                             'size': 0,
                             'size_human': 'Unknown',
                             'type': 'disk',
                         })
-            except Exception:
-                pass
 
         elif system == 'Windows':
-            # Windows — list physical drives
             for i in range(16):
                 path = f"\\\\.\\PhysicalDrive{i}"
                 try:
-                    with open(path, 'rb') as f:
-                        f.seek(0, 2)
-                        size = f.tell()
-                    drives.append({
-                        'path': path,
-                        'name': f"PhysicalDrive{i}",
-                        'size': size,
-                        'size_human': self._human_size(size),
-                        'type': 'disk',
-                    })
+                    size = self._get_device_size(path)
+                    if size and size > 0:
+                        drives.append({
+                            'path': path,
+                            'name': f"PhysicalDrive{i}",
+                            'size': size,
+                            'size_human': self._human_size(size),
+                            'type': 'disk',
+                        })
                 except Exception:
                     continue
 
         return drives
+
+    # ─── Scan Control ────────────────────────────────────────────────────
 
     def start_scan(self, source_path: str, file_types: Optional[List[str]] = None,
                    chunk_size: Optional[int] = None) -> bool:
@@ -207,18 +340,26 @@ class FileCarver:
         self._cancel_event.clear()
         self._pause_event.set()
 
-        # Get source size
+        # Get source size — platform-aware
         try:
             if os.path.isfile(source_path):
                 total_size = os.path.getsize(source_path)
             else:
-                # Block device — seek to end
-                with open(source_path, 'rb') as f:
-                    f.seek(0, 2)
-                    total_size = f.tell()
+                total_size = self._get_device_size(source_path)
         except Exception as e:
-            self.progress.status = 'error'
-            self.progress.error = str(e)
+            self.progress = ScanProgress(status='error', error=str(e))
+            return False
+
+        # Catch the 0-byte lie: if size detection failed, don't fake a scan
+        if not total_size or total_size <= 0:
+            self.progress = ScanProgress(
+                status='error',
+                error=(
+                    f'Could not determine size of "{source_path}". '
+                    f'Make sure the path is correct and you have permission to read it. '
+                    f'On macOS, try the raw device (e.g. /dev/rdisk2) or run with sudo.'
+                )
+            )
             return False
 
         self.progress = ScanProgress(
@@ -232,59 +373,50 @@ class FileCarver:
         return True
 
     def pause_scan(self):
-        """Pause the current scan."""
         if self.progress.status == 'scanning':
             self._pause_event.clear()
             self.progress.status = 'paused'
 
     def resume_scan(self):
-        """Resume a paused scan."""
         if self.progress.status == 'paused':
             self._pause_event.set()
             self.progress.status = 'scanning'
 
     def cancel_scan(self):
-        """Cancel the current scan."""
         self._cancel_event.set()
-        self._pause_event.set()  # Unpause to allow thread to exit
+        self._pause_event.set()
         self.progress.status = 'cancelled'
 
     def get_progress(self) -> dict:
-        """Get current scan progress."""
         return self.progress.to_dict()
 
     def get_results(self) -> List[dict]:
-        """Get all carved files."""
         with self._lock:
             return [f.to_dict() for f in self.carved_files]
 
     def get_carved_file(self, file_id: str) -> Optional[CarvedFile]:
-        """Get a specific carved file by ID."""
         with self._lock:
             for f in self.carved_files:
                 if f"{f.signature.extension}_{f.offset}" == file_id:
                     return f
         return None
 
+    # ─── Scan Worker ─────────────────────────────────────────────────────
+
     def _scan_worker(self):
         """Background scanning worker thread."""
         try:
             with open(self._source_path, 'rb') as source:
                 offset = 0
-                # Build a quick lookup of header lengths needed
                 max_header_len = max(len(s.header) for s in self._signatures)
-                # For BMFF types, we need more bytes for validation
                 peek_size = max(max_header_len, 16)
 
                 while offset < self.progress.total_bytes:
-                    # Check cancel
                     if self._cancel_event.is_set():
                         return
 
-                    # Check pause
                     self._pause_event.wait()
 
-                    # Read a buffer
                     source.seek(offset)
                     buffer = source.read(self.read_buffer_size)
                     if not buffer:
@@ -297,41 +429,32 @@ class FileCarver:
                         if self._cancel_event.is_set():
                             return
 
-                        # Try each signature at this position
                         matched = False
                         for sig in self._signatures:
                             header_len = len(sig.header)
 
-                            # Quick header check
                             if buffer[pos:pos + header_len] != sig.header:
                                 continue
 
-                            # Get enough data for validation
                             chunk = buffer[pos:pos + min(peek_size, buf_len - pos)]
 
-                            # Extra validation check
                             if sig.extra_check and not sig.extra_check(chunk):
                                 continue
 
-                            # Found a match — determine file size
                             file_size = sig.max_size
                             abs_offset = offset + pos
 
                             if sig.parse_size:
-                                # Read more data for size parsing
                                 source.seek(abs_offset)
                                 size_data = source.read(min(sig.max_size, 10 * 1024 * 1024))
                                 parsed_size = sig.parse_size(size_data, sig.max_size)
                                 if parsed_size and parsed_size >= sig.min_size:
                                     file_size = parsed_size
-                                # Reset source position
                                 source.seek(offset + buf_len)
 
-                            # Validate minimum size
                             if file_size < sig.min_size:
                                 continue
 
-                            # Cap at remaining source
                             file_size = min(file_size, self.progress.total_bytes - abs_offset)
 
                             carved = CarvedFile(
@@ -347,7 +470,6 @@ class FileCarver:
                                 self.progress.total_files += 1
 
                             matched = True
-                            # Skip past this file to avoid finding embedded files
                             skip = max(self.chunk_size, min(file_size, 1024 * 1024))
                             pos += skip
                             break
@@ -355,15 +477,23 @@ class FileCarver:
                         if not matched:
                             pos += self.chunk_size
 
-                    # Update progress
                     offset += buf_len
                     self.progress.scanned_bytes = min(offset, self.progress.total_bytes)
                     self.progress.current_offset = offset
                     self.progress.elapsed = time.time() - self.progress.start_time
 
-            self.progress.status = 'complete'
-            self.progress.scanned_bytes = self.progress.total_bytes
+            # Final state — only "complete" if we actually scanned something
             self.progress.elapsed = time.time() - self.progress.start_time
+
+            if self.progress.scanned_bytes == 0:
+                self.progress.status = 'error'
+                self.progress.error = (
+                    'Scan finished but read 0 bytes. '
+                    'The device may be empty, unreadable, or requires different permissions.'
+                )
+            else:
+                self.progress.status = 'complete'
+                self.progress.scanned_bytes = self.progress.total_bytes
 
         except PermissionError:
             self.progress.status = 'error'
@@ -371,13 +501,17 @@ class FileCarver:
         except FileNotFoundError:
             self.progress.status = 'error'
             self.progress.error = f'Source not found: {self._source_path}'
+        except OSError as e:
+            self.progress.status = 'error'
+            self.progress.error = f'Read error: {e}'
         except Exception as e:
             self.progress.status = 'error'
-            self.progress.error = str(e)
+            self.progress.error = f'Unexpected error: {e}'
+
+    # ─── Helpers ─────────────────────────────────────────────────────────
 
     @staticmethod
     def _human_size(size: int) -> str:
-        """Convert bytes to human-readable size."""
         if size < 1024:
             return f"{size} B"
         elif size < 1024 * 1024:

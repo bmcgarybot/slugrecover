@@ -64,10 +64,32 @@
 
         <div class="form-group">
             <label class="form-label">Path to Drive or Image File</label>
-            <input type="text" id="source-path"
-                   placeholder="Examples: /dev/sdb1 &nbsp;·&nbsp; E:\ &nbsp;·&nbsp; /path/to/sdcard.img">
+            <div style="display:flex;gap:8px;">
+                <input type="text" id="source-path" style="flex:1;"
+                       placeholder="Examples: /dev/sdb1 &nbsp;·&nbsp; E:\ &nbsp;·&nbsp; /path/to/sdcard.img">
+                <button class="btn btn-secondary" onclick="openFileBrowser('source')" title="Browse...">📂 Browse</button>
+            </div>
             <div class="form-hint">
-                💡 Tip: You can scan a whole drive, a single partition, or a disk image file (.img, .dd, .raw)
+                💡 Tip: Click Browse to navigate to a drive or image file, or type the path directly
+            </div>
+        </div>
+
+        <!-- File Browser Modal -->
+        <div id="file-browser" class="file-browser" style="display:none;">
+            <div class="file-browser-header">
+                <span class="step-title">📂 Browse</span>
+                <button class="btn btn-sm btn-secondary" onclick="closeFileBrowser()">✕ Close</button>
+            </div>
+            <div class="file-browser-path">
+                <label class="form-label" style="margin-bottom:4px;">Location</label>
+                <div style="display:flex;gap:8px;">
+                    <input type="text" id="browser-path-input" onkeydown="if(event.key==='Enter')navigateBrowser(this.value)">
+                    <button class="btn btn-sm btn-secondary" onclick="navigateBrowser(document.getElementById('browser-path-input').value)">Go</button>
+                </div>
+            </div>
+            <div class="file-browser-list" id="browser-list"></div>
+            <div class="file-browser-footer">
+                <button class="btn btn-primary btn-sm" id="browser-select-btn" onclick="selectBrowserPath()" disabled>Select This Path</button>
             </div>
         </div>
     </div>
@@ -131,7 +153,10 @@
 
         <div class="form-group">
             <label class="form-label">Output Folder</label>
-            <input type="text" id="output-dir" value="{{ settings.output_dir }}">
+            <div style="display:flex;gap:8px;">
+                <input type="text" id="output-dir" value="{{ settings.output_dir }}" style="flex:1;">
+                <button class="btn btn-secondary" onclick="openFileBrowser('output')" title="Browse...">📂 Browse</button>
+            </div>
             <div class="form-hint">
                 ⚠️ Important: Save to a <strong>different drive</strong> than the one you're recovering from!
             </div>

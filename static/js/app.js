@@ -382,6 +382,105 @@ function selectCategory(category) {
     });
 }
 
+// ─── File Browser ───────────────────────────────────────
+
+let browserState = {
+    target: null, // 'source' or 'output'
+    currentPath: '',
+    selectedPath: '',
+};
+
+function openFileBrowser(target) {
+    browserState.target = target;
+    const browser = document.getElementById('file-browser');
+    if (browser) {
+        browser.style.display = 'block';
+        navigateBrowser(''); // Start at default location
+    }
+}
+
+function closeFileBrowser() {
+    const browser = document.getElementById('file-browser');
+    if (browser) browser.style.display = 'none';
+}
+
+function navigateBrowser(path) {
+    fetch('/api/browse?path=' + encodeURIComponent(path))
+        .then(r => r.json())
+        .then(data => {
+            if (data.error && (!data.items || data.items.length === 0)) {
+                showAlert(data.error);
+                return;
+            }
+
+            browserState.currentPath = data.current;
+            browserState.selectedPath = data.current;
+
+            const pathInput = document.getElementById('browser-path-input');
+            if (pathInput) pathInput.value = data.current;
+
+            const list = document.getElementById('browser-list');
+            if (!list) return;
+
+            list.innerHTML = '';
+
+            if (data.is_file) {
+                // Selected a file — auto-select it
+                browserState.selectedPath = data.current;
+                selectBrowserPath();
+                return;
+            }
+
+            data.items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'browser-item';
+                el.innerHTML = `
+                    <span class="icon">${item.is_dir ? '📁' : '📄'}</span>
+                    <span class="name">${item.name}</span>
+                    <span class="size">${item.size_human}</span>
+                `;
+
+                if (item.is_dir) {
+                    el.addEventListener('dblclick', () => navigateBrowser(item.path));
+                    el.addEventListener('click', () => {
+                        list.querySelectorAll('.browser-item').forEach(i => i.classList.remove('selected'));
+                        el.classList.add('selected');
+                        browserState.selectedPath = item.path;
+                        updateBrowserSelectBtn();
+                    });
+                } else {
+                    el.addEventListener('click', () => {
+                        list.querySelectorAll('.browser-item').forEach(i => i.classList.remove('selected'));
+                        el.classList.add('selected');
+                        browserState.selectedPath = item.path;
+                        updateBrowserSelectBtn();
+                    });
+                    el.addEventListener('dblclick', () => {
+                        browserState.selectedPath = item.path;
+                        selectBrowserPath();
+                    });
+                }
+
+                list.appendChild(el);
+            });
+
+            updateBrowserSelectBtn();
+        })
+        .catch(err => showAlert('Browse error: ' + err));
+}
+
+function updateBrowserSelectBtn() {
+    const btn = document.getElementById('browser-select-btn');
+    if (btn) btn.disabled = !browserState.selectedPath;
+}
+
+function selectBrowserPath() {
+    const targetId = browserState.target === 'output' ? 'output-dir' : 'source-path';
+    const input = document.getElementById(targetId);
+    if (input) input.value = browserState.selectedPath;
+    closeFileBrowser();
+}
+
 // ─── Settings ───────────────────────────────────────────
 
 function saveSettings() {
