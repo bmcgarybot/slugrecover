@@ -490,6 +490,63 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// ─── File Browser ───────────────────────────────────────
+
+let browserTarget = null;
+let browserSelected = '';
+
+function openBrowser(target) {
+    browserTarget = target;
+    document.getElementById('browser-panel').style.display = 'block';
+    let current = '';
+    if (target === 'output') current = val('output-dir');
+    else if (target === 'settings-output') current = val('settings-output-dir');
+    else current = val('source-path');
+    browseTo(current || '');
+}
+
+function closeBrowser() {
+    document.getElementById('browser-panel').style.display = 'none';
+}
+
+function browseTo(path) {
+    fetch('/api/browse?path=' + encodeURIComponent(path))
+        .then(r => r.json())
+        .then(d => {
+            if (d.is_file) { browserSelected = d.current; useBrowserPath(); return; }
+            browserSelected = d.current;
+            document.getElementById('browser-path').value = d.current;
+            const list = document.getElementById('browser-list');
+            list.innerHTML = '';
+            d.items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'browser-item';
+                el.innerHTML = `<span class="bi-icon">${item.is_dir ? '📁' : '📄'}</span><span class="bi-name">${item.name}</span><span class="bi-size">${item.size_human}</span>`;
+                el.addEventListener('click', () => {
+                    list.querySelectorAll('.browser-item').forEach(i => i.classList.remove('selected'));
+                    el.classList.add('selected');
+                    browserSelected = item.path;
+                });
+                el.addEventListener('dblclick', () => {
+                    if (item.is_dir) browseTo(item.path);
+                    else { browserSelected = item.path; useBrowserPath(); }
+                });
+                list.appendChild(el);
+            });
+        });
+}
+
+function useBrowserPath() {
+    let id;
+    if (browserTarget === 'output') id = 'output-dir';
+    else if (browserTarget === 'settings-output') id = 'settings-output-dir';
+    else id = 'source-path';
+    document.getElementById(id).value = browserSelected;
+    closeBrowser();
+}
+
+function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
 // ─── Settings ───────────────────────────────────────────
 
 function saveSettings() {
