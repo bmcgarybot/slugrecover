@@ -494,28 +494,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
 let browserTarget = null;
 let browserSelected = '';
+let browserCurrentDir = '';
+let homeDir = '/Users/Shared';
 
 function openBrowser(target) {
     browserTarget = target;
-    document.getElementById('browser-panel').style.display = 'block';
+    document.getElementById('browser-overlay').style.display = 'flex';
     let current = '';
     if (target === 'output') current = val('output-dir');
     else if (target === 'settings-output') current = val('settings-output-dir');
     else current = val('source-path');
-    browseTo(current || '');
+    browseTo(current || '/Volumes');
 }
 
 function closeBrowser() {
-    document.getElementById('browser-panel').style.display = 'none';
+    document.getElementById('browser-overlay').style.display = 'none';
 }
 
 function browseTo(path) {
+    // Handle ".." — go up one level
+    if (path === '..') {
+        const parts = browserCurrentDir.split('/').filter(Boolean);
+        parts.pop();
+        path = '/' + parts.join('/') || '/';
+    }
+
     fetch('/api/browse?path=' + encodeURIComponent(path))
         .then(r => r.json())
         .then(d => {
+            if (d.home) homeDir = d.home;
             if (d.is_file) { browserSelected = d.current; useBrowserPath(); return; }
             browserSelected = d.current;
+            browserCurrentDir = d.current;
             document.getElementById('browser-path').value = d.current;
+            const label = document.getElementById('browser-selected-label');
+            if (label) label.textContent = d.current;
             const list = document.getElementById('browser-list');
             list.innerHTML = '';
             d.items.forEach(item => {
@@ -526,6 +539,7 @@ function browseTo(path) {
                     list.querySelectorAll('.browser-item').forEach(i => i.classList.remove('selected'));
                     el.classList.add('selected');
                     browserSelected = item.path;
+                    if (label) label.textContent = item.path;
                 });
                 el.addEventListener('dblclick', () => {
                     if (item.is_dir) browseTo(item.path);

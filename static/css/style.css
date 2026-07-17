@@ -840,6 +840,115 @@ input::placeholder { color: var(--text-muted); }
     .stats-grid { grid-template-columns: 1fr 1fr; }
 }
 
+/* ─── File Browser Modal ─────────────────────────────── */
+
+.browser-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+}
+
+.browser-modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: min(600px, 90vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.browser-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.browser-modal-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+
+.browser-modal-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.browser-quick-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.browser-path-input {
+    flex: 1;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 12px !important;
+}
+
+.browser-list {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 200px;
+    max-height: 400px;
+}
+
+.browser-list:empty::after {
+    content: 'Empty folder';
+    display: block;
+    text-align: center;
+    padding: 40px;
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
+.browser-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+}
+
+.browser-item:last-child { border-bottom: none; }
+.browser-item:hover { background: var(--bg-highlight); }
+.browser-item.selected { background: var(--accent-soft); border-left: 3px solid var(--accent); }
+.browser-item .bi-icon { font-size: 18px; flex-shrink: 0; }
+.browser-item .bi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-item .bi-size { color: var(--text-faint); font-size: 12px; font-family: monospace; }
+
+.browser-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    gap: 12px;
+}
+
+.browser-selected-path {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-faint);
+    font-family: 'SF Mono', Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ─── Utilities ──────────────────────────────────────── */
 
 .mt-12 { margin-top: 12px; }

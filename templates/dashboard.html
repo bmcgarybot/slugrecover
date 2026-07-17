@@ -36,19 +36,6 @@
             <div class="form-hint">⚠️ Use a <strong>different drive</strong> than the one you're scanning</div>
         </div>
 
-        <!-- File Browser Panel (hidden until opened) -->
-        <div id="browser-panel" style="display:none;" class="form-group">
-            <div class="browser-header">
-                <input type="text" id="browser-path" class="browser-path-input" onkeydown="if(event.key==='Enter')browseTo(this.value)">
-                <button class="btn btn-xs" onclick="browseTo(document.getElementById('browser-path').value)">Go</button>
-                <button class="btn btn-xs" onclick="closeBrowser()">✕</button>
-            </div>
-            <div class="browser-list" id="browser-list"></div>
-            <div class="browser-footer">
-                <button class="btn btn-sm btn-primary" onclick="useBrowserPath()">Use This Path</button>
-            </div>
-        </div>
-
         <!-- File Types — collapsed by default -->
         <div class="form-group">
             <label class="form-label type-toggle" onclick="toggleTypePanel()" style="cursor:pointer;">
@@ -151,6 +138,33 @@
         </div>
         <div id="results-subtitle" class="form-hint" style="margin-bottom:8px;">Select files to recover, or grab them all.</div>
         <div class="results-grid" id="results-grid"></div>
+    </div>
+</div>
+
+<!-- ═══ FILE BROWSER MODAL ═══ -->
+<div id="browser-overlay" class="browser-overlay" style="display:none;" onclick="if(event.target===this)closeBrowser()">
+    <div class="browser-modal">
+        <div class="browser-modal-header">
+            <span class="browser-modal-title">📂 Browse Files</span>
+            <button class="btn btn-xs" onclick="closeBrowser()">✕</button>
+        </div>
+        <div class="browser-modal-nav">
+            <button class="btn btn-xs" onclick="browseTo('..')" title="Up one level">⬆️ Up</button>
+            <input type="text" id="browser-path" class="browser-path-input" onkeydown="if(event.key==='Enter')browseTo(this.value)" placeholder="/path/to/folder">
+            <button class="btn btn-xs" onclick="browseTo(document.getElementById('browser-path').value)">Go</button>
+        </div>
+        <div class="browser-quick-links">
+            <button class="btn btn-xs" onclick="browseTo('/Volumes')">💾 Volumes</button>
+            <button class="btn btn-xs" onclick="browseTo('/Users')">👤 Users</button>
+            <button class="btn btn-xs" onclick="browseTo(homeDir)">🏠 Home</button>
+            <button class="btn btn-xs" onclick="browseTo(homeDir + '/Desktop')">🖥 Desktop</button>
+            <button class="btn btn-xs" onclick="browseTo(homeDir + '/Downloads')">📥 Downloads</button>
+        </div>
+        <div class="browser-list" id="browser-list"></div>
+        <div class="browser-modal-footer">
+            <span class="browser-selected-path" id="browser-selected-label">No folder selected</span>
+            <button class="btn btn-primary" onclick="useBrowserPath()">Use This Path</button>
+        </div>
     </div>
 </div>
 

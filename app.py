@@ -348,7 +348,8 @@ def api_browse():
     return jsonify({
         'current': path,
         'is_file': False,
-        'items': items
+        'items': items,
+        'home': os.path.expanduser('~')
     })
 
 
