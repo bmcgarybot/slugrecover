@@ -85,14 +85,25 @@
         <div class="type-toolbar">
             <button class="btn btn-sm btn-secondary" onclick="selectAllTypes()">✅ All</button>
             <button class="btn btn-sm btn-secondary" onclick="selectNoTypes()">❌ None</button>
-            <button class="btn btn-sm btn-secondary" onclick="selectCategory('image')">📷 Photos Only</button>
-            <button class="btn btn-sm btn-secondary" onclick="selectCategory('video')">🎬 Videos Only</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectCategory('image')">📷 Photos</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectCategory('video')">🎬 Videos</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectCategory('audio')">🎵 Audio</button>
         </div>
 
-        <div class="type-category-label">📷 Photos & Images</div>
-        <div class="type-grid" id="type-grid-images">
-            {% for sig in signatures %}
-            {% if sig.category == 'image' %}
+        {% set categories = [
+            ('image', '📷 Photos & Images'),
+            ('video', '🎬 Videos'),
+            ('audio', '🎵 Audio'),
+            ('document', '📄 Documents'),
+            ('archive', '📦 Archives'),
+        ] %}
+
+        {% for cat_id, cat_label in categories %}
+        {% set cat_sigs = signatures|selectattr('category', 'equalto', cat_id)|list %}
+        {% if cat_sigs %}
+        <div class="type-category-label">{{ cat_label }}</div>
+        <div class="type-grid">
+            {% for sig in cat_sigs %}
             <div class="type-card checked" onclick="toggleType(this)" data-ext="{{ sig.extension }}" data-category="{{ sig.category }}">
                 <input type="checkbox" value="{{ sig.extension }}" checked>
                 <div class="type-check"></div>
@@ -102,43 +113,10 @@
                     <div class="type-ext">.{{ sig.extension }}</div>
                 </div>
             </div>
-            {% endif %}
             {% endfor %}
         </div>
-
-        <div class="type-category-label">🎬 Videos</div>
-        <div class="type-grid" id="type-grid-videos">
-            {% for sig in signatures %}
-            {% if sig.category == 'video' %}
-            <div class="type-card checked" onclick="toggleType(this)" data-ext="{{ sig.extension }}" data-category="{{ sig.category }}">
-                <input type="checkbox" value="{{ sig.extension }}" checked>
-                <div class="type-check"></div>
-                <span class="type-icon">{{ sig.icon }}</span>
-                <div class="type-info">
-                    <div class="type-name">{{ sig.name }}</div>
-                    <div class="type-ext">.{{ sig.extension }}</div>
-                </div>
-            </div>
-            {% endif %}
-            {% endfor %}
-        </div>
-
-        <div class="type-category-label">📄 Documents</div>
-        <div class="type-grid" id="type-grid-docs">
-            {% for sig in signatures %}
-            {% if sig.category == 'document' %}
-            <div class="type-card checked" onclick="toggleType(this)" data-ext="{{ sig.extension }}" data-category="{{ sig.category }}">
-                <input type="checkbox" value="{{ sig.extension }}" checked>
-                <div class="type-check"></div>
-                <span class="type-icon">{{ sig.icon }}</span>
-                <div class="type-info">
-                    <div class="type-name">{{ sig.name }}</div>
-                    <div class="type-ext">.{{ sig.extension }}</div>
-                </div>
-            </div>
-            {% endif %}
-            {% endfor %}
-        </div>
+        {% endif %}
+        {% endfor %}
     </div>
 
     <!-- Step 3: Where to Save -->

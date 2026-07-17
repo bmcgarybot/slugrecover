@@ -81,6 +81,21 @@
         {% endfor %}
     </div>
 
+    <div class="type-category-label">🎵 Audio</div>
+    <div class="type-grid">
+        {% for sig in signatures %}
+        {% if sig.category == 'audio' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
+            <div class="type-info">
+                <div class="type-name">{{ sig.name }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ sig.max_size_mb|int }}MB</div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
     <div class="type-category-label">📄 Documents</div>
     <div class="type-grid">
         {% for sig in signatures %}
@@ -90,6 +105,21 @@
             <div class="type-info">
                 <div class="type-name">{{ sig.name }}</div>
                 <div class="type-ext">.{{ sig.extension }} · up to {{ sig.max_size_mb|int }}MB</div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <div class="type-category-label">📦 Archives</div>
+    <div class="type-grid">
+        {% for sig in signatures %}
+        {% if sig.category == 'archive' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
+            <div class="type-info">
+                <div class="type-name">{{ sig.name }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ (sig.max_size_mb/1024)|round(1) }}GB</div>
             </div>
         </div>
         {% endif %}
