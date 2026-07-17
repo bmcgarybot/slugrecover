@@ -1,9 +1,18 @@
 @echo off
 REM ────────────────────────────────────────────────────────────
 REM  🐌 SlugRecover — Windows Launcher
-REM  Just double-click this file. It sets everything up for you.
+REM  Just double-click this file. It handles everything.
 REM ────────────────────────────────────────────────────────────
 title SlugRecover
+
+REM ── Auto-elevate to admin (standard Windows UAC popup) ─────
+net session >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Requesting admin access...
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 cd /d "%~dp0"
 
 echo.
@@ -40,8 +49,7 @@ if not exist ".venv" (
     echo   and only happens once...
     %PYTHON% -m venv .venv
     if errorlevel 1 (
-        echo   Setup failed. Please take a photo of this window
-        echo   and send it to whoever gave you SlugRecover.
+        echo   Setup failed. Please try again.
         pause
         exit /b 1
     )
@@ -57,19 +65,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ── 4. Drive access check ──────────────────────────────────
-net session >nul 2>nul
-if errorlevel 1 (
-    echo.
-    echo   NOTE: To recover from a real drive or memory card,
-    echo   close this window, then RIGHT-CLICK this file and
-    echo   choose "Run as administrator".
-    echo.
-    echo   Scanning disk image files works fine without that.
-    echo.
-)
-
-REM ── 5. Launch ──────────────────────────────────────────────
+REM ── 4. Launch ──────────────────────────────────────────────
+echo.
 echo   SlugRecover is starting — your browser will open.
 echo   Keep this window open while you use it.
 echo.

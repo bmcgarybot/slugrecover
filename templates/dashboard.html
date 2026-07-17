@@ -9,28 +9,6 @@
     <p>Find and recover deleted photos, videos, and documents from any drive or memory card.</p>
 </div>
 
-<!-- Admin Notice -->
-{% if not is_admin %}
-<div class="banner warning">
-    <span class="banner-icon">⚠️</span>
-    <div>
-        <strong>Running without admin privileges.</strong><br>
-        To scan drives directly, restart with
-        {% if platform == 'Windows' %}
-            <strong>Run as Administrator</strong>.
-        {% else %}
-            <code>sudo python3 app.py</code>.
-        {% endif %}
-        <br>You can still scan <strong>disk image files</strong> (.img, .dd, .raw) without admin.
-    </div>
-</div>
-{% else %}
-<div class="banner success">
-    <span class="banner-icon">✅</span>
-    <div><strong>Admin access enabled.</strong> You can scan drives, partitions, and image files.</div>
-</div>
-{% endif %}
-
 <!-- ═══ SCAN SETUP ═══ -->
 <div id="scan-setup">
 

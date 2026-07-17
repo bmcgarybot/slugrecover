@@ -36,29 +36,16 @@ settings = {
 def dashboard():
     """Main dashboard page."""
     drives = []
-    is_admin = False
 
     try:
         drives = carver.list_drives()
     except Exception:
         pass
 
-    # Check if running with elevated privileges
-    if platform.system() != 'Windows':
-        is_admin = os.geteuid() == 0
-    else:
-        try:
-            import ctypes
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-        except Exception:
-            pass
-
     return render_template('dashboard.html',
                            drives=drives,
                            signatures=get_signature_info(),
-                           is_admin=is_admin,
-                           settings=settings,
-                           platform=platform.system())
+                           settings=settings)
 
 
 @app.route('/results')

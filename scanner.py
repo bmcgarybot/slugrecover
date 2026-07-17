@@ -365,9 +365,9 @@ class FileCarver:
             self.progress = ScanProgress(
                 status='error',
                 error=(
-                    f'Could not determine size of "{source_path}". '
-                    f'Make sure the path is correct and you have permission to read it. '
-                    f'On macOS, try the raw device (e.g. /dev/rdisk2) or run with sudo.'
+                    f'Could not read the size of this drive. '
+                    f'Close SlugRecover and reopen it — your computer will '
+                    f'ask for your password to allow access.'
                 )
             )
             return False
@@ -561,7 +561,11 @@ class FileCarver:
 
         except PermissionError:
             self.progress.status = 'error'
-            self.progress.error = 'Permission denied. Run with sudo/admin privileges for raw disk access.'
+            self.progress.error = (
+                "SlugRecover doesn't have permission to read this drive. "
+                "Close SlugRecover and reopen it — your computer will ask for "
+                "your password to allow access."
+            )
         except FileNotFoundError:
             self.progress.status = 'error'
             self.progress.error = f'Source not found: {self._source_path}'
