@@ -21,6 +21,10 @@ class FileSignature:
     max_size: int = 50 * 1024 * 1024
     min_size: int = 1024
     parse_size: Optional[Callable] = None
+    # Optional seek-based size parser: (file_handle, abs_offset, max_size)
+    # -> Optional[int]. Preferred over parse_size when set; lets the
+    # parser hop box-to-box with tiny reads instead of one big window.
+    parse_size_fh: Optional[Callable] = None
     color: str = "#888888"
     icon: str = "📄"
 
@@ -73,18 +77,33 @@ def parse_tiff_size(data: bytes, max_read: int = 100 * 1024 * 1024) -> Optional[
         return None
 
 
-def parse_bmff_size(data: bytes, max_read: int = 500 * 1024 * 1024) -> Optional[int]:
-    """Parse ISO BMFF (MP4/MOV/HEIF/CR3/3GP/M4A) size from box headers."""
+def parse_bmff_size(data: bytes, max_read: int = 4 * 1024 * 1024 * 1024) -> Optional[int]:
+    """Parse ISO BMFF (MP4/MOV/HEIF/CR3/3GP/M4A) size from box headers.
+
+    Walks ALL top-level boxes instead of stopping at the first mdat.
+    Camcorders and most cameras write the moov index AFTER mdat — the
+    old early-return truncated those files right before moov, producing
+    recovered videos that would not play.
+    """
+    _KNOWN = {b'ftyp', b'moov', b'mdat', b'free', b'skip', b'wide',
+              b'pnot', b'uuid', b'moof', b'mfra', b'meta', b'udta',
+              b'styp', b'sidx', b'ssix', b'prft', b'mdta'}
     try:
         offset = 0
         total_size = 0
-        while offset < len(data) and offset < max_read:
+        saw_mdat = False
+        while offset < max_read:
             if offset + 8 > len(data):
+                # Box header lies beyond what we read; the arithmetic so
+                # far (header-only walk) is still valid — stop here.
                 break
             box_size = struct.unpack('>I', data[offset:offset + 4])[0]
             box_type = data[offset + 4:offset + 8]
+            if box_type not in _KNOWN:
+                break  # walked into garbage — trust what we have
             if box_size == 0:
-                return None
+                # "extends to end of file" — unknowable when carving
+                break
             elif box_size == 1:
                 if offset + 16 > len(data):
                     break
@@ -94,8 +113,53 @@ def parse_bmff_size(data: bytes, max_read: int = 500 * 1024 * 1024) -> Optional[
             total_size = offset + box_size
             offset += box_size
             if box_type == b'mdat':
-                return min(total_size, max_read)
+                saw_mdat = True
+        if total_size > 0 and saw_mdat:
+            return min(total_size, max_read)
+        # No mdat seen (e.g. HEIF stills) — extent of known boxes
         return min(total_size, max_read) if total_size > 0 else None
+    except Exception:
+        return None
+
+
+def parse_bmff_size_fh(fh, abs_offset: int,
+                       max_size: int = 4 * 1024 * 1024 * 1024) -> Optional[int]:
+    """Seek-based BMFF size parser. Hops from box to box reading only
+    16-byte headers, so it finds a trailing moov even on a 4GB video
+    without reading the data in between."""
+    _KNOWN = {b'ftyp', b'moov', b'mdat', b'free', b'skip', b'wide',
+              b'pnot', b'uuid', b'moof', b'mfra', b'meta', b'udta',
+              b'styp', b'sidx', b'ssix', b'prft', b'mdta'}
+    try:
+        rel = 0
+        total = 0
+        saw_mdat = False
+        for _ in range(512):  # sane box-count bound
+            if rel >= max_size:
+                break
+            fh.seek(abs_offset + rel)
+            hdr = fh.read(16)
+            if len(hdr) < 8:
+                break
+            box_size = struct.unpack('>I', hdr[0:4])[0]
+            box_type = hdr[4:8]
+            if box_type not in _KNOWN:
+                break
+            if box_size == 0:
+                break  # "to end of file" — unknowable when carving
+            elif box_size == 1:
+                if len(hdr) < 16:
+                    break
+                box_size = struct.unpack('>Q', hdr[8:16])[0]
+            if box_size < 8:
+                break
+            total = rel + box_size
+            rel += box_size
+            if box_type == b'mdat':
+                saw_mdat = True
+        if total > 0 and saw_mdat:
+            return min(total, max_size)
+        return min(total, max_size) if total > 0 else None
     except Exception:
         return None
 
@@ -306,7 +370,7 @@ SIGNATURES: List[FileSignature] = [
         name="HEIF / HEIC", extension="heif", category="image",
         header=b'\x00\x00\x00', extra_check=check_heif,
         max_size=80 * 1024 * 1024, min_size=10 * 1024,
-        parse_size=parse_bmff_size, color="#e74c3c", icon="🖼️",
+        parse_size=parse_bmff_size, parse_size_fh=parse_bmff_size_fh, color="#e74c3c", icon="🖼️",
     ),
     FileSignature(
         name="WEBP", extension="webp", category="image",
@@ -362,7 +426,7 @@ SIGNATURES: List[FileSignature] = [
         name="CR3 Raw", extension="cr3", category="image",
         header=b'\x00\x00\x00', extra_check=check_cr3,
         max_size=120 * 1024 * 1024, min_size=5 * 1024 * 1024,
-        parse_size=parse_bmff_size, color="#ff6b6b", icon="📷",
+        parse_size=parse_bmff_size, parse_size_fh=parse_bmff_size_fh, color="#ff6b6b", icon="📷",
     ),
     FileSignature(
         name="NEF Raw", extension="nef", category="image",
@@ -382,19 +446,39 @@ SIGNATURES: List[FileSignature] = [
         max_size=100 * 1024 * 1024, min_size=1 * 1024 * 1024,
         parse_size=parse_tiff_size, color="#ff4500", icon="📷",
     ),
+    FileSignature(
+        name="ORF Raw (Olympus)", extension="orf", category="image",
+        header=b'IIRO', max_size=80 * 1024 * 1024, min_size=100 * 1024,
+        color="#16a085", icon="📷",
+    ),
+    FileSignature(
+        name="ORF Raw (Olympus)", extension="orf", category="image",
+        header=b'IIRS', max_size=80 * 1024 * 1024, min_size=100 * 1024,
+        color="#16a085", icon="📷",
+    ),
+    FileSignature(
+        name="RW2 Raw (Panasonic)", extension="rw2", category="image",
+        header=b'II\x55\x00\x18\x00\x00\x00', max_size=80 * 1024 * 1024,
+        min_size=100 * 1024, color="#8e44ad", icon="📷",
+    ),
+    FileSignature(
+        name="RAF Raw (Fujifilm)", extension="raf", category="image",
+        header=b'FUJIFILMCCD-RAW', max_size=120 * 1024 * 1024,
+        min_size=100 * 1024, color="#27ae60", icon="📷",
+    ),
 
     # ══════════════════════ VIDEO ══════════════════════
     FileSignature(
         name="MP4", extension="mp4", category="video",
         header=b'\x00\x00\x00', extra_check=check_mp4,
         max_size=4 * 1024 * 1024 * 1024, min_size=10 * 1024,
-        parse_size=parse_bmff_size, color="#8e44ad", icon="🎥",
+        parse_size=parse_bmff_size, parse_size_fh=parse_bmff_size_fh, color="#8e44ad", icon="🎥",
     ),
     FileSignature(
         name="MOV", extension="mov", category="video",
         header=b'\x00\x00\x00', extra_check=check_mov,
         max_size=4 * 1024 * 1024 * 1024, min_size=10 * 1024,
-        parse_size=parse_bmff_size, color="#9b59b6", icon="🎬",
+        parse_size=parse_bmff_size, parse_size_fh=parse_bmff_size_fh, color="#9b59b6", icon="🎬",
     ),
     FileSignature(
         name="AVI", extension="avi", category="video",
@@ -419,7 +503,18 @@ SIGNATURES: List[FileSignature] = [
         header=b'\x00\x00\x00',
         extra_check=lambda d: len(d) >= 12 and d[4:8] == b'ftyp' and d[8:12] in (b'3gp4', b'3gp5', b'3gp6', b'3ge6', b'3gg6'),
         max_size=2 * 1024 * 1024 * 1024, min_size=1024,
-        parse_size=parse_bmff_size, color="#7f8c8d", icon="📱",
+        parse_size=parse_bmff_size, parse_size_fh=parse_bmff_size_fh, color="#7f8c8d", icon="📱",
+    ),
+    FileSignature(
+        name="WMV / ASF", extension="wmv", category="video",
+        header=b'\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c',
+        max_size=2 * 1024 * 1024 * 1024, min_size=64 * 1024,
+        color="#2980b9", icon="🎬",
+    ),
+    FileSignature(
+        name="MPEG Video", extension="mpg", category="video",
+        header=b'\x00\x00\x01\xba', max_size=2 * 1024 * 1024 * 1024,
+        min_size=64 * 1024, color="#c0392b", icon="🎬",
     ),
 
     # ══════════════════════ AUDIO ══════════════════════
@@ -464,7 +559,7 @@ SIGNATURES: List[FileSignature] = [
         header=b'\x00\x00\x00',
         extra_check=lambda d: len(d) >= 12 and d[4:8] == b'ftyp' and d[8:12] in (b'M4A ', b'M4B ', b'mp42'),
         max_size=200 * 1024 * 1024, min_size=1024,
-        parse_size=parse_bmff_size, color="#e91e63", icon="🎵",
+        parse_size=parse_bmff_size, parse_size_fh=parse_bmff_size_fh, color="#e91e63", icon="🎵",
     ),
     FileSignature(
         name="AIFF", extension="aiff", category="audio",
@@ -492,6 +587,13 @@ SIGNATURES: List[FileSignature] = [
         header=b'\\{\\rtf',
         max_size=50 * 1024 * 1024, min_size=100,
         color="#6c5ce7", icon="📝",
+    ),
+    FileSignature(
+        name="Word / Excel (older .doc/.xls)", extension="doc",
+        category="document",
+        header=b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1',
+        max_size=100 * 1024 * 1024, min_size=4 * 1024,
+        color="#2b579a", icon="📄",
     ),
 
     # ═══════════════════ ARCHIVES ══════════════════════

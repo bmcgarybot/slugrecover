@@ -10,11 +10,23 @@ from typing import Optional, List, Tuple
 from scanner import FileCarver, CarvedFile
 
 
+_COPY_CHUNK = 4 * 1024 * 1024  # 4MB streaming copy chunks
+
+
 def recover_file(carver: FileCarver, carved_file: CarvedFile,
-                 output_dir: str, index: int) -> Optional[str]:
+                 output_dir: str, index: int = 0) -> Optional[str]:
     """
     Extract a carved file from the source and save it to disk.
     Returns the output file path on success, None on failure.
+
+    Data safety:
+    - Streams in 4MB chunks (never loads a whole file into RAM — the old
+      code read entire multi-GB videos into memory at once).
+    - Writes to a temp file and os.replace()s into place, so a crash
+      can never leave a partial file that looks recovered.
+    - Filenames are keyed on the source byte offset, so they are stable
+      and unique: recovering in several batches can never overwrite
+      files from an earlier batch (the old per-call index counter did).
     """
     source_path = carver._source_path
     if not source_path:
@@ -24,43 +36,71 @@ def recover_file(carver: FileCarver, carved_file: CarvedFile,
     type_dir = os.path.join(output_dir, carved_file.signature.extension.upper())
     os.makedirs(type_dir, exist_ok=True)
 
-    # Generate filename
-    filename = f"recovered_{index:04d}.{carved_file.signature.extension}"
+    # Offset-keyed filename: stable, unique, cross-batch safe
+    filename = (f"recovered_0x{carved_file.offset:012X}"
+                f".{carved_file.signature.extension}")
     output_path = os.path.join(type_dir, filename)
 
+    tmp_path = output_path + '.slugpart'
     try:
-        # Read data from source
-        with open(source_path, 'rb') as f:
-            f.seek(carved_file.offset)
-            data = f.read(carved_file.size)
+        head = b''
+        with open(source_path, 'rb') as src, open(tmp_path, 'wb') as out:
+            src.seek(carved_file.offset)
+            remaining = carved_file.size
+            total_written = 0
+            while remaining > 0:
+                chunk = src.read(min(_COPY_CHUNK, remaining))
+                if not chunk:
+                    break
+                if total_written == 0:
+                    head = chunk[:65536]
+                out.write(chunk)
+                total_written += len(chunk)
+                remaining -= len(chunk)
 
-        if not data or len(data) < carved_file.signature.min_size:
+        if total_written < carved_file.signature.min_size:
             carved_file.valid = False
+            os.unlink(tmp_path)
             return None
 
-        # Validate the data
-        if not _validate_carved_data(data, carved_file):
+        # Validate header/footer before finalizing
+        tail = b''
+        if carved_file.signature.footer:
+            with open(tmp_path, 'rb') as f:
+                f.seek(max(0, total_written - 4096))
+                tail = f.read()
+        if not _validate_carved_data(head, carved_file, tail=tail):
             carved_file.valid = False
-            # Still save it but mark as potentially invalid
+            # Still keep it — partially damaged files are often worth
+            # having in recovery scenarios — but mark as questionable.
 
-        # Write to output
-        with open(output_path, 'wb') as f:
-            f.write(data)
+        os.replace(tmp_path, output_path)
 
         carved_file.recovered = True
         carved_file.recovery_path = output_path
 
-        # Generate thumbnail for images
+        # Generate thumbnail for images (from the recovered file)
         if carved_file.signature.category == 'image':
-            thumb_path = _generate_thumbnail(data, output_path, type_dir, index,
-                                              carved_file.signature.extension)
-            if thumb_path:
-                carved_file.thumbnail_path = thumb_path
+            try:
+                with open(output_path, 'rb') as f:
+                    data = f.read(32 * 1024 * 1024)
+                thumb_path = _generate_thumbnail(
+                    data, output_path, type_dir, carved_file.offset,
+                    carved_file.signature.extension)
+                if thumb_path:
+                    carved_file.thumbnail_path = thumb_path
+            except Exception:
+                pass
 
         return output_path
 
-    except Exception as e:
+    except Exception:
         carved_file.valid = False
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
         return None
 
 
@@ -72,9 +112,6 @@ def recover_files(carver: FileCarver, file_ids: List[str],
     os.makedirs(output_dir, exist_ok=True)
     results = []
 
-    # Count existing files per type for numbering
-    type_counts = {}
-
     for file_id in file_ids:
         carved = carver.get_carved_file(file_id)
         if not carved:
@@ -85,11 +122,7 @@ def recover_files(carver: FileCarver, file_ids: List[str],
             })
             continue
 
-        ext = carved.signature.extension
-        type_counts[ext] = type_counts.get(ext, 0) + 1
-        index = type_counts[ext]
-
-        path = recover_file(carver, carved, output_dir, index)
+        path = recover_file(carver, carved, output_dir)
         results.append({
             'id': file_id,
             'success': path is not None,
@@ -108,24 +141,23 @@ def recover_all(carver: FileCarver, output_dir: str) -> List[dict]:
     return recover_files(carver, file_ids, output_dir)
 
 
-def _validate_carved_data(data: bytes, carved_file: CarvedFile) -> bool:
-    """Basic validation of carved file data."""
+def _validate_carved_data(head: bytes, carved_file: CarvedFile,
+                          tail: bytes = b'') -> bool:
+    """Basic validation of carved file data (header + optional footer)."""
     sig = carved_file.signature
 
     # Check header is still present
-    if data[:len(sig.header)] != sig.header:
+    if head[:len(sig.header)] != sig.header:
         return False
 
     # Run extra check if available
     if sig.extra_check:
-        if not sig.extra_check(data[:min(len(data), 64)]):
+        if not sig.extra_check(head[:min(len(head), 64)]):
             return False
 
     # Check footer if defined
-    if sig.footer:
-        # Footer should be near the end
-        search_end = data[-min(len(data), 4096):]
-        if sig.footer not in search_end:
+    if sig.footer and tail:
+        if sig.footer not in tail:
             return False
 
     return True
@@ -139,7 +171,7 @@ def _generate_thumbnail(data: bytes, file_path: str, type_dir: str,
 
         thumb_dir = os.path.join(type_dir, 'thumbnails')
         os.makedirs(thumb_dir, exist_ok=True)
-        thumb_path = os.path.join(thumb_dir, f"thumb_{index:04d}.jpg")
+        thumb_path = os.path.join(thumb_dir, f"thumb_0x{index:012X}.jpg")
 
         # Try to open the image
         if extension in ('jpg', 'png', 'bmp', 'gif', 'webp', 'tiff'):

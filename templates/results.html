@@ -2,35 +2,119 @@
 {% block title %}SlugRecover — Results{% endblock %}
 
 {% block content %}
-<div class="card compact">
-    <div class="results-bar">
-        <span class="card-label">📁 <span id="results-count">0</span> files found</span>
-        <div class="btn-row" style="margin:0;">
-            <button class="btn btn-xs" onclick="selectAll()">Select All</button>
-            <button class="btn btn-xs" onclick="selectNone()">None</button>
-            <button class="btn btn-xs btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>💾 Recover (0)</button>
-            <button class="btn btn-xs btn-success" onclick="recoverAll()">✅ Recover All</button>
+<div class="page-header">
+    <h1>📁 Files We Found</h1>
+    <p>Click any photo to see it full size before saving. Tick the ones you want, then press <strong>Save Selected</strong>.</p>
+</div>
+
+<div class="step-card">
+    <div class="results-toolbar">
+        <div class="results-count">
+            <span id="results-count">0</span> files found
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-sm btn-secondary" onclick="selectAll()">Select All</button>
+            <button class="btn btn-sm btn-secondary" onclick="selectNone()">Select None</button>
+            <button class="btn btn-sm btn-primary" id="btn-recover-selected" onclick="recoverSelected()" disabled>
+                💾 Save Selected (0)
+            </button>
+            <button class="btn btn-sm btn-success" onclick="recoverAll()">
+                ✅ Save Everything
+            </button>
         </div>
     </div>
 
-    <div class="form-group" style="margin-bottom:12px;">
+    <div class="form-group">
         <label class="form-label">Save To</label>
         <input type="text" id="output-dir" value="{{ settings.output_dir }}">
+        <div class="form-hint">💡 Important: save to a <strong>different</strong> drive than the one you're recovering from.</div>
     </div>
 
     <div class="results-grid" id="results-grid">
-        <div class="empty-state">
+        <div class="empty-state" style="grid-column:1/-1;">
             <div class="icon">🔍</div>
-            <p>No results yet. Run a scan from the Dashboard.</p>
+            <p>Nothing here yet.<br>Go to the <a href="/">Home page</a> and run a scan first.</p>
         </div>
     </div>
 </div>
+
+<!-- Recovery Stats -->
+<div class="step-card" id="stats-card" style="display:none;">
+    <div class="step-header">
+        <div class="step-number" style="background:linear-gradient(135deg, var(--green), #27ae60);">📊</div>
+        <div>
+            <div class="step-title">Recovery Statistics</div>
+        </div>
+    </div>
+    <div class="stats-grid" id="recovery-stats"></div>
+</div>
+
+<!-- Preview Modal — see a photo full size before saving it -->
+<div class="preview-modal" id="preview-modal">
+    <div class="preview-backdrop" onclick="closePreview()"></div>
+    <div class="preview-dialog">
+        <div class="preview-header">
+            <div>
+                <div class="preview-title" id="preview-title">Photo</div>
+                <div class="preview-meta" id="preview-meta"></div>
+            </div>
+            <button class="preview-close" onclick="closePreview()" aria-label="Close">✕</button>
+        </div>
+        <div class="preview-body">
+            <div class="preview-loading" id="preview-loading">
+                <div class="spinner"></div>
+                <p>Reading photo from the drive…</p>
+            </div>
+            <img id="preview-image" alt="Photo preview">
+            <div class="preview-error" id="preview-error">
+                <div class="icon">😕</div>
+                <p>This photo couldn't be shown — it may be damaged.<br>
+                   You can still try saving it below.</p>
+            </div>
+        </div>
+        <div class="preview-footer">
+            <button class="btn btn-secondary" onclick="closePreview()">Close</button>
+            <button class="btn btn-primary" onclick="recoverFromPreview()">💾 Save This Photo</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
     loadResults();
+
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(data => {
+            if (data.total_files > 0) {
+                const statsCard = document.getElementById('stats-card');
+                const statsGrid = document.getElementById('recovery-stats');
+                if (statsCard) statsCard.style.display = 'block';
+                if (statsGrid) {
+                    statsGrid.innerHTML = `
+                        <div class="stat-card">
+                            <div class="stat-value">${data.total_files}</div>
+                            <div class="stat-label">Files Recovered</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${formatBytes(data.total_size)}</div>
+                            <div class="stat-label">Total Size</div>
+                        </div>
+                    `;
+                    for (const [type, info] of Object.entries(data.by_type)) {
+                        statsGrid.innerHTML += `
+                            <div class="stat-card">
+                                <div class="stat-value">${info.count}</div>
+                                <div class="stat-label">${type}</div>
+                            </div>
+                        `;
+                    }
+                }
+            }
+        });
 });
 </script>
 {% endblock %}

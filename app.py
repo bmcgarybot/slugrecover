@@ -14,6 +14,7 @@ from flask import (Flask, render_template, request, jsonify, Response,
 from scanner import FileCarver
 from signatures import get_signature_info, get_all_extensions, SIGNATURES
 from recovery import recover_files, recover_all, get_recovery_stats
+import preview as preview_engine
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'slugrecover-secret-key'
@@ -96,6 +97,7 @@ def api_start_scan():
     # Update output dir if provided
     settings['output_dir'] = output_dir
 
+    preview_engine.clear_cache()  # previews belong to the previous scan
     success = carver.start_scan(source, file_types or None, chunk_size)
     if success:
         return jsonify({'status': 'started', 'source': source})
@@ -222,24 +224,54 @@ def api_recover_all():
 
 @app.route('/api/thumbnail/<path:file_id>')
 def api_thumbnail(file_id):
-    """Serve a thumbnail image."""
+    """Serve a thumbnail — generated straight from the drive, BEFORE
+    recovery, so you can see what a file is before saving it."""
     carved = carver.get_carved_file(file_id)
-    if carved and carved.thumbnail_path and os.path.exists(carved.thumbnail_path):
+    if not carved:
+        return '', 404
+
+    # Post-recovery thumbnail already on disk? Use it.
+    if carved.thumbnail_path and os.path.exists(carved.thumbnail_path):
         return send_file(carved.thumbnail_path, mimetype='image/jpeg')
-    # Return a placeholder
+
+    # Pre-recovery: build one directly from the source
+    if carved.signature.category == 'image' and carver._source_path:
+        thumb = preview_engine.generate_preview(
+            carver._source_path, carved.offset, carved.size,
+            carved.signature.extension, size=preview_engine.THUMB_SIZE)
+        if thumb:
+            return send_file(thumb, mimetype='image/jpeg')
+
     return '', 204
 
 
 @app.route('/api/preview/<path:file_id>')
 def api_preview(file_id):
-    """Serve a recovered file for preview/download."""
+    """Serve a large preview of a file. Works BEFORE recovery (generated
+    from the drive) and after (served from the recovered file)."""
     carved = carver.get_carved_file(file_id)
-    if not carved or not carved.recovery_path or not os.path.exists(carved.recovery_path):
-        return jsonify({'error': 'File not recovered yet'}), 404
+    if not carved:
+        return jsonify({'error': 'File not found in scan results'}), 404
 
-    return send_file(carved.recovery_path,
-                     as_attachment=False,
-                     download_name=os.path.basename(carved.recovery_path))
+    # Recovered already? Serve the real file.
+    if carved.recovery_path and os.path.exists(carved.recovery_path):
+        return send_file(carved.recovery_path,
+                         as_attachment=False,
+                         download_name=os.path.basename(carved.recovery_path))
+
+    # Pre-recovery large preview from the source
+    if carved.signature.category == 'image' and carver._source_path:
+        big = preview_engine.generate_preview(
+            carver._source_path, carved.offset, carved.size,
+            carved.signature.extension, size=preview_engine.PREVIEW_SIZE)
+        if big:
+            return send_file(big, mimetype='image/jpeg')
+        return jsonify({'error': "This file couldn't be previewed — it may "
+                                 "be damaged. You can still try recovering "
+                                 "it."}), 422
+
+    return jsonify({'error': 'Preview is only available for photos. '
+                             'Recover the file to open it.'}), 404
 
 
 @app.route('/api/drives')
@@ -250,57 +282,6 @@ def api_drives():
         return jsonify({'drives': drives})
     except Exception as e:
         return jsonify({'error': str(e), 'drives': []}), 500
-
-
-@app.route('/api/browse')
-def api_browse():
-    """Browse filesystem directories."""
-    path = request.args.get('path', '')
-
-    if not path:
-        if platform.system() == 'Darwin':
-            path = '/Volumes'
-        elif platform.system() == 'Windows':
-            path = 'C:\\'
-        else:
-            path = '/'
-
-    path = os.path.expanduser(path)
-
-    if not os.path.exists(path):
-        return jsonify({'error': f'Not found: {path}', 'items': [], 'current': path})
-
-    if os.path.isfile(path):
-        return jsonify({'current': path, 'is_file': True, 'items': []})
-
-    items = []
-    try:
-        entries = sorted(os.listdir(path))
-    except PermissionError:
-        return jsonify({'error': 'Permission denied', 'items': [], 'current': path})
-
-    parent = os.path.dirname(path.rstrip('/'))
-    if parent and parent != path:
-        items.append({'name': '..', 'path': parent, 'is_dir': True, 'size_human': ''})
-
-    for entry in entries:
-        if entry.startswith('.'):
-            continue
-        full = os.path.join(path, entry)
-        try:
-            is_dir = os.path.isdir(full)
-            size = 0 if is_dir else os.path.getsize(full)
-            items.append({
-                'name': entry,
-                'path': full,
-                'is_dir': is_dir,
-                'size_human': FileCarver._human_size(size) if not is_dir else '',
-            })
-        except (PermissionError, OSError):
-            continue
-
-    return jsonify({'current': path, 'is_file': False, 'items': items})
-
 
 
 @app.route('/api/settings', methods=['GET', 'POST'])
@@ -346,6 +327,16 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5678))
     debug = os.environ.get('FLASK_DEBUG', '0') == '1'
 
+    # os.geteuid doesn't exist on Windows — the old banner crashed at launch
+    if hasattr(os, 'geteuid'):
+        admin_str = 'Yes' if os.geteuid() == 0 else 'No'
+    else:
+        try:
+            import ctypes
+            admin_str = 'Yes' if ctypes.windll.shell32.IsUserAnAdmin() != 0 else 'No'
+        except Exception:
+            admin_str = 'No'
+
     print(f"""
 ╔══════════════════════════════════════════════════╗
 ║            🐌 SlugRecover v1.0                   ║
@@ -353,7 +344,7 @@ if __name__ == '__main__':
 ╠══════════════════════════════════════════════════╣
 ║  Web UI: http://localhost:{port:<5}                  ║
 ║  Platform: {platform.system():<20}              ║
-║  Admin: {'Yes' if os.geteuid() == 0 else 'No':<5}                                ║
+║  Admin: {admin_str:<5}                                ║
 ╚══════════════════════════════════════════════════╝
 """)
 

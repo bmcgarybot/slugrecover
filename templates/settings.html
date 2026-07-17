@@ -2,57 +2,128 @@
 {% block title %}SlugRecover — Settings{% endblock %}
 
 {% block content %}
+<div class="page-header">
+    <h1>⚙️ Settings</h1>
+    <p>Customize how SlugRecover scans and recovers your files.</p>
+</div>
+
 <div class="settings-card">
     <div class="card-title">📂 Output</div>
+
     <div class="form-group">
         <label class="form-label">Default Output Folder</label>
         <input type="text" id="settings-output-dir" value="{{ settings.output_dir }}">
+        <div class="form-hint">Where recovered files are saved by default</div>
     </div>
 </div>
 
 <div class="settings-card">
-    <div class="card-title">🔧 Performance</div>
+    <div class="card-title">🔧 Scan Performance</div>
+
     <div class="form-group">
         <label class="form-label">Scan Alignment</label>
         <select id="settings-chunk-size">
-            <option value="512" {% if settings.chunk_size == 512 %}selected{% endif %}>512 bytes (recommended)</option>
-            <option value="1024" {% if settings.chunk_size == 1024 %}selected{% endif %}>1,024 bytes (faster)</option>
-            <option value="4096" {% if settings.chunk_size == 4096 %}selected{% endif %}>4,096 bytes (fastest)</option>
+            <option value="512" {% if settings.chunk_size == 512 %}selected{% endif %}>512 bytes — Standard (recommended)</option>
+            <option value="1024" {% if settings.chunk_size == 1024 %}selected{% endif %}>1,024 bytes — Faster, may miss some files</option>
+            <option value="4096" {% if settings.chunk_size == 4096 %}selected{% endif %}>4,096 bytes — Fastest, less thorough</option>
         </select>
+        <div class="form-hint">Smaller = more thorough but slower. 512 bytes is recommended for best results.</div>
     </div>
+
     <div class="form-group">
-        <label class="form-label">Buffer Size</label>
+        <label class="form-label">Memory Buffer Size</label>
         <select id="settings-buffer-mb">
-            <option value="1" {% if settings.read_buffer_mb == 1 %}selected{% endif %}>1 MB</option>
-            <option value="4" {% if settings.read_buffer_mb == 4 %}selected{% endif %}>4 MB (default)</option>
-            <option value="8" {% if settings.read_buffer_mb == 8 %}selected{% endif %}>8 MB</option>
-            <option value="16" {% if settings.read_buffer_mb == 16 %}selected{% endif %}>16 MB</option>
-            <option value="32" {% if settings.read_buffer_mb == 32 %}selected{% endif %}>32 MB</option>
+            <option value="1" {% if settings.read_buffer_mb == 1 %}selected{% endif %}>1 MB — Low memory</option>
+            <option value="4" {% if settings.read_buffer_mb == 4 %}selected{% endif %}>4 MB — Default</option>
+            <option value="8" {% if settings.read_buffer_mb == 8 %}selected{% endif %}>8 MB — Faster</option>
+            <option value="16" {% if settings.read_buffer_mb == 16 %}selected{% endif %}>16 MB — Fast</option>
+            <option value="32" {% if settings.read_buffer_mb == 32 %}selected{% endif %}>32 MB — Fastest</option>
         </select>
-        <div class="form-hint">Larger = faster, more RAM</div>
+        <div class="form-hint">Larger buffer = faster scanning but uses more RAM</div>
     </div>
-    <button class="btn btn-primary" onclick="saveSettings()">💾 Save</button>
+
+    <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
 </div>
 
 <div class="settings-card">
-    <div class="card-title">📋 Supported Formats</div>
-    {% set categories = [('image','📷 Images'),('video','🎬 Video'),('audio','🎵 Audio'),('document','📄 Docs'),('archive','📦 Archives')] %}
-    {% for cat_id, cat_label in categories %}
-    {% set cat_sigs = signatures|selectattr('category','equalto',cat_id)|list %}
-    {% if cat_sigs %}
-    <div class="type-category-label">{{ cat_label }}</div>
+    <div class="card-title">📋 Supported File Types</div>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">
+        These are all the file types SlugRecover can find and recover.
+    </p>
+
+    <div class="type-category-label">📷 Photos & Images</div>
     <div class="type-grid">
-        {% for sig in cat_sigs %}
-        <div class="type-card">
-            <span>{{ sig.icon }}</span>
+        {% for sig in signatures %}
+        {% if sig.category == 'image' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
             <div class="type-info">
                 <div class="type-name">{{ sig.name }}</div>
-                <div class="type-ext">.{{ sig.extension }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ sig.max_size_mb|int }}MB</div>
             </div>
         </div>
+        {% endif %}
         {% endfor %}
     </div>
-    {% endif %}
-    {% endfor %}
+
+    <div class="type-category-label">🎬 Videos</div>
+    <div class="type-grid">
+        {% for sig in signatures %}
+        {% if sig.category == 'video' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
+            <div class="type-info">
+                <div class="type-name">{{ sig.name }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ (sig.max_size_mb/1024)|round(1) }}GB</div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <div class="type-category-label">🎵 Audio</div>
+    <div class="type-grid">
+        {% for sig in signatures %}
+        {% if sig.category == 'audio' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
+            <div class="type-info">
+                <div class="type-name">{{ sig.name }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ sig.max_size_mb|int }}MB</div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <div class="type-category-label">📄 Documents</div>
+    <div class="type-grid">
+        {% for sig in signatures %}
+        {% if sig.category == 'document' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
+            <div class="type-info">
+                <div class="type-name">{{ sig.name }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ sig.max_size_mb|int }}MB</div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <div class="type-category-label">📦 Archives</div>
+    <div class="type-grid">
+        {% for sig in signatures %}
+        {% if sig.category == 'archive' %}
+        <div class="type-card" style="cursor:default;border-color:var(--border);">
+            <span class="type-icon">{{ sig.icon }}</span>
+            <div class="type-info">
+                <div class="type-name">{{ sig.name }}</div>
+                <div class="type-ext">.{{ sig.extension }} · up to {{ (sig.max_size_mb/1024)|round(1) }}GB</div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
 </div>
 {% endblock %}

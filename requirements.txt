@@ -1,2 +1,5 @@
 flask>=3.0
 Pillow>=10.0
+
+# Optional: enables previews of HEIC/HEIF photos (iPhone format)
+# pillow-heif>=0.15
