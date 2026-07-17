@@ -25,6 +25,11 @@ class FileSignature:
     # -> Optional[int]. Preferred over parse_size when set; lets the
     # parser hop box-to-box with tiny reads instead of one big window.
     parse_size_fh: Optional[Callable] = None
+    # If True, a match is only kept when parse_size succeeds. Used for
+    # frame-based audio (MP3/AAC) where a failed frame-walk means the
+    # match was a false positive — without this, the scanner fell back
+    # to carving max_size (50MB of garbage per random sync-byte hit).
+    require_parse: bool = False
     color: str = "#888888"
     icon: str = "📄"
 
@@ -305,7 +310,6 @@ def parse_mp3_size(data: bytes, max_read: int = 50 * 1024 * 1024) -> Optional[in
         return None
     except Exception:
         return None
-        return None
 
 
 def parse_flac_size(data: bytes, max_read: int = 200 * 1024 * 1024) -> Optional[int]:
@@ -404,12 +408,49 @@ def check_mp3_id3(data: bytes) -> bool:
 
 
 def check_mp3_sync(data: bytes) -> bool:
-    if len(data) < 4 or data[0] != 0xff or (data[1] & 0xe0) != 0xe0:
+    """Strict MPEG audio frame validation: all header fields must be
+    valid AND a second valid frame must start exactly where the first
+    one ends. Max MPEG frame is ~1.4KB, so with a 4KB window the second
+    frame is always verifiable — no benefit-of-the-doubt path."""
+    def frame_len_at(off):
+        if off + 4 > len(data):
+            return None
+        if data[off] != 0xff or (data[off + 1] & 0xe0) != 0xe0:
+            return None
+        version = (data[off + 1] >> 3) & 0x03
+        layer = (data[off + 1] >> 1) & 0x03
+        bitrate_idx = (data[off + 2] >> 4) & 0x0f
+        srate_idx = (data[off + 2] >> 2) & 0x03
+        padding = (data[off + 2] >> 1) & 0x01
+        if version == 1 or layer == 0 or bitrate_idx in (0, 15) or srate_idx == 3:
+            return None
+        BITRATES = {
+            (3, 1): [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0],
+            (3, 2): [0,32,48,56,64,80,96,112,128,160,192,224,256,320,384,0],
+            (3, 3): [0,32,64,96,128,160,192,224,256,288,320,352,384,416,448,0],
+            (2, 1): [0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0],
+            (2, 2): [0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0],
+            (0, 1): [0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0],
+        }
+        SAMPLERATES = {3: [44100,48000,32000], 2: [22050,24000,16000],
+                       0: [11025,12000,8000]}
+        key = (version, layer)
+        if key not in BITRATES or version not in SAMPLERATES:
+            return None
+        bitrate = BITRATES[key][bitrate_idx] * 1000
+        srate = SAMPLERATES[version][srate_idx]
+        if not bitrate or not srate:
+            return None
+        if layer == 3:  # Layer I
+            fl = (12 * bitrate // srate + padding) * 4
+        else:           # Layer II / III
+            fl = 144 * bitrate // srate + padding
+        return fl if fl >= 21 else None
+
+    fl = frame_len_at(0)
+    if fl is None:
         return False
-    version = (data[1] >> 3) & 0x03
-    layer = (data[1] >> 1) & 0x03
-    bitrate_idx = (data[2] >> 4) & 0x0f
-    return version != 1 and layer != 0 and bitrate_idx not in (0, 15)
+    return frame_len_at(fl) is not None
 
 
 def check_mkv(data: bytes) -> bool:
@@ -421,26 +462,28 @@ def check_psd(data: bytes) -> bool:
 
 
 def check_aac_adts(data: bytes) -> bool:
-    """Validate AAC ADTS frame header — reject false positives."""
-    if len(data) < 7:
+    """Strict ADTS validation. The header is only 2 sync bytes, so
+    without a verified second frame virtually any 0xFFF1 in random data
+    matched — this required consecutive-frame check kills that."""
+    def hdr_ok(off):
+        if off + 7 > len(data):
+            return None
+        if data[off] != 0xff or (data[off + 1] & 0xf6) != 0xf0:
+            return None  # sync + layer bits must be 00
+        srate_idx = (data[off + 2] >> 2) & 0x0f
+        channel_cfg = ((data[off + 2] & 0x01) << 2) | ((data[off + 3] >> 6) & 0x03)
+        if srate_idx > 12 or channel_cfg == 0 or channel_cfg > 7:
+            return None
+        fl = ((data[off + 3] & 0x03) << 11) | (data[off + 4] << 3) |              ((data[off + 5] >> 5) & 0x07)
+        # Real AAC frames are well under 4KB; bigger = garbage
+        if fl < 7 or fl > 4000:
+            return None
+        return fl
+
+    fl = hdr_ok(0)
+    if fl is None:
         return False
-    # Sync word is 0xFFF (12 bits) — we matched 0xFFF1, check profile/srate
-    profile = (data[2] >> 6) & 0x03
-    srate_idx = (data[2] >> 2) & 0x0f
-    channel_cfg = ((data[2] & 0x01) << 2) | ((data[3] >> 6) & 0x03)
-    # Valid sample rate index (0-12), valid channels (1-7)
-    if srate_idx > 12 or channel_cfg == 0 or channel_cfg > 7:
-        return False
-    # Frame length from header
-    frame_len = ((data[3] & 0x03) << 11) | (data[4] << 3) | ((data[5] >> 5) & 0x07)
-    if frame_len < 7 or frame_len > 8192:
-        return False
-    # Check for next frame sync at expected position
-    if len(data) > frame_len + 1:
-        if data[frame_len] == 0xff and (data[frame_len + 1] & 0xf0) == 0xf0:
-            return True  # Consecutive frame found — very likely real AAC
-        return False  # No next frame — probably garbage
-    return True  # Not enough data to check, give benefit of doubt
+    return hdr_ok(fl) is not None
 
 
 def parse_aac_size(data: bytes, max_read: int = 50 * 1024 * 1024) -> Optional[int]:
@@ -694,7 +737,7 @@ SIGNATURES: List[FileSignature] = [
         name="MP3", extension="mp3", category="audio",
         header=b'\xff\xfb', extra_check=check_mp3_sync,
         max_size=50 * 1024 * 1024, min_size=10 * 1024,
-        parse_size=parse_mp3_size, color="#1db954", icon="🎵",
+        parse_size=parse_mp3_size, require_parse=True, color="#1db954", icon="🎵",
     ),
     FileSignature(
         name="WAV", extension="wav", category="audio",
@@ -713,7 +756,7 @@ SIGNATURES: List[FileSignature] = [
         header=b'\xff\xf1',
         max_size=50 * 1024 * 1024, min_size=4 * 1024,
         extra_check=check_aac_adts,
-        parse_size=parse_aac_size,
+        parse_size=parse_aac_size, require_parse=True,
         color="#9b59b6", icon="🎵",
     ),
     FileSignature(

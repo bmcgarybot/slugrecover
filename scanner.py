@@ -458,7 +458,8 @@ class FileCarver:
                 # Build a quick lookup of header lengths needed
                 max_header_len = max(len(s.header) for s in self._signatures)
                 # For BMFF types, we need more bytes for validation
-                peek_size = max(max_header_len, 16)
+                # 4KB window lets validators verify a SECOND audio frame
+                peek_size = max(max_header_len, 4096)
 
                 while offset < self.progress.total_bytes:
                     # Check cancel
@@ -508,6 +509,7 @@ class FileCarver:
                             # Found a match — determine file size
                             file_size = sig.max_size
                             abs_offset = offset + pos
+                            parsed_size = None
 
                             if sig.parse_size_fh:
                                 # Seek-based parser: tiny targeted reads,
@@ -525,6 +527,13 @@ class FileCarver:
                                     file_size = parsed_size
                                 # Reset source position
                                 source.seek(offset + buf_len)
+
+                            # Frame-based formats (MP3/AAC): a failed
+                            # frame-walk means false positive — drop the
+                            # match instead of carving max_size garbage
+                            if sig.require_parse and not (
+                                    parsed_size and parsed_size >= sig.min_size):
+                                continue
 
                             # Validate minimum size
                             if file_size < sig.min_size:
