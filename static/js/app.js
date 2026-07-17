@@ -51,7 +51,8 @@ function startScan() {
     .then(r => r.json())
     .then(data => {
         if (data.error) {
-            showAlert('Error: ' + data.error);
+            const msg = data.details ? data.error + '\n\n' + data.details : data.error;
+            showAlert(msg);
             if (startBtn) {
                 startBtn.disabled = false;
                 startBtn.innerHTML = '🔍 Start Recovery Scan';

@@ -148,6 +148,12 @@ class FileCarver:
                 size = f.tell()
                 if size > 0:
                     return size
+        except PermissionError:
+            raise PermissionError(
+                "SlugRecover doesn't have permission to read this drive. "
+                "Close SlugRecover and reopen it — your computer will ask "
+                "for your password to allow access."
+            )
         except Exception:
             pass
 
@@ -337,6 +343,8 @@ class FileCarver:
         with self._start_lock:
             if self.progress.status in ('scanning', 'paused'):
                 return False
+            # Reset state so retries work after errors
+            self.progress = ScanProgress()
             # Claim immediately so a concurrent request can't also start
             self.progress.status = 'scanning'
 

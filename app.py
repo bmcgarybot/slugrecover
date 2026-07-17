@@ -89,8 +89,9 @@ def api_start_scan():
     if success:
         return jsonify({'status': 'started', 'source': source})
     else:
-        return jsonify({'error': 'Scan already in progress or failed to start',
-                        'details': carver.progress.error}), 409
+        # Return the actual error so the user knows what happened
+        err = carver.progress.error or 'Unknown error'
+        return jsonify({'error': err}), 409
 
 
 @app.route('/api/scan/pause', methods=['POST'])
