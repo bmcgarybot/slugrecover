@@ -9,6 +9,18 @@ echo ""
 echo "  🐌 Starting SlugRecover..."
 echo ""
 
+# ── 0. Self-heal (silent) ────────────────────────────────────
+# Remove the download-quarantine flag from this whole folder so
+# macOS stops running our app from a hidden translocated copy,
+# and bake this folder's real location into the snail app so it
+# can always find its way home, even if translocated.
+HERE="$(pwd)"
+xattr -cr "$HERE" 2>/dev/null
+if [ -d "$HERE/SlugRecover.app/Contents/Resources" ]; then
+    printf '%s' "$HERE/Start SlugRecover.command" \
+        > "$HERE/SlugRecover.app/Contents/Resources/launcher_path" 2>/dev/null
+fi
+
 # ── 1. Find a REAL Python ────────────────────────────────────
 # On a fresh Mac, `python3` exists only as a stub that pops the
 # developer-tools installer and otherwise does nothing. So we don't

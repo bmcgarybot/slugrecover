@@ -1,12 +1,46 @@
 #!/bin/bash
 # Opens the SlugRecover launcher in a Terminal window.
-# The .app lives in the SlugRecover folder, next to the launcher.
-DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-LAUNCHER="$DIR/Start SlugRecover.command"
+#
+# macOS "app translocation" runs downloaded unsigned apps from a
+# hidden randomized copy, which breaks naive relative paths. So we
+# find the real folder with a fallback chain:
+#   1. A baked-in absolute path (written by the launcher on first run)
+#   2. Our own relative location (works when not translocated)
+#   3. Searching the usual places people keep downloads
 
-if [ ! -f "$LAUNCHER" ]; then
-    # The .app was moved out of its folder — tell the person kindly
-    osascript -e 'display dialog "SlugRecover could not find its files.\n\nPlease keep the SlugRecover app inside the SlugRecover folder. To put it on your Desktop or Dock, drag it there WITHOUT moving it out of the folder (the Dock keeps it in place), or right-click it and choose Make Alias." buttons {"OK"} with icon caution with title "SlugRecover"'
+RES="$(cd "$(dirname "$0")/../Resources" 2>/dev/null && pwd)"
+
+candidates=()
+
+# 1. Baked path from a previous launcher run (survives translocation
+#    because Resources is copied along with the app)
+if [ -f "$RES/launcher_path" ]; then
+    candidates+=("$(cat "$RES/launcher_path")")
+fi
+
+# 2. Relative: the .app sitting in its folder, untranslocated
+REL="$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)"
+candidates+=("$REL/Start SlugRecover.command")
+
+# 3. Search common homes for the folder (covers the fresh-download,
+#    double-clicked-the-app-first case)
+for base in "$HOME/Downloads" "$HOME/Desktop" "$HOME/Applications" \
+            "$HOME/Documents" "/Applications"; do
+    while IFS= read -r hit; do
+        candidates+=("$hit")
+    done < <(find "$base" -maxdepth 4 -name "Start SlugRecover.command" -type f 2>/dev/null | head -5)
+done
+
+LAUNCHER=""
+for c in "${candidates[@]}"; do
+    if [ -n "$c" ] && [ -f "$c" ]; then
+        LAUNCHER="$c"
+        break
+    fi
+done
+
+if [ -z "$LAUNCHER" ]; then
+    osascript -e 'display dialog "SlugRecover could not find its files.\n\nPlease open the SlugRecover folder and double-click:\n\n    Start SlugRecover.command\n\nAfter that first run, this snail icon will work on its own." buttons {"OK"} with icon caution with title "SlugRecover"'
     exit 1
 fi
 
